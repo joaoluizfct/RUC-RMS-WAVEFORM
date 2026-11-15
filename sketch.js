@@ -1,4 +1,3 @@
-
 let audioCtx = null;
 let audioBuffer = null;
 let sourceNode = null;
@@ -13,13 +12,15 @@ let tempoInicioCtx = 0;
 let offsetPausa = 0;
 let paragemManual = false;
 
-// Canvas de exportação: 420 × 84 px; 19 colunas da matriz
+// Canvas de exportação: 420 × 84 px, com uma linha de 19 bolinhas.
 const LARGURA_FRAME = 420;
 const ALTURA_FRAME = 84;
-const NUM_BOLINHAS = 10;
+const NUM_BOLINHAS = 19;
 const COR_RUC = '#E31E24';
+const ESPACO_BOLINHAS = 6;
+const DIAMETRO_MAX = 14;
 
-// Mapa estático dos 19 valores RMS extraídos do áudio completo
+// Mapa estático dos 19 valores RMS extraídos do áudio completo.
 let mapaRMSEstatico = [];
 let nivelVivo = 0;
 
@@ -27,7 +28,7 @@ let gravando = false;
 let mediaRecorder = null;
 let chunksGravacao = [];
 
-// Referências DOM
+// Referências DOM.
 let elDropZone, elInputAudio, elBtnImport, elBtnPlay, elBtnExport, elSlider, elStatus;
 
 function setup() {
@@ -36,10 +37,8 @@ function setup() {
   pixelDensity(1);
 
   mapaRMSEstatico = Array.from({ length: NUM_BOLINHAS }, () => 0);
-
   ligarInterface();
 }
-
 
 function draw() {
   clear();
@@ -48,7 +47,7 @@ function draw() {
   let rmsInstantaneo = 0;
   let progressoAudio = 0;
 
-  // RMS vocal em tempo real
+  // RMS do áudio em tempo real.
   if (estaTocando && audioBuffer && analyserNode && dadosTempo) {
     const tempoDecorrido = audioCtx.currentTime - tempoInicioCtx;
     progressoAudio = constrain(tempoDecorrido / audioBuffer.duration, 0, 1);
@@ -69,59 +68,46 @@ function draw() {
     );
   }
 
-  // Ataque rápido e decaimento suave
+  // Ataque rápido e decaimento suave para uma resposta visual fluida.
   const fatorSuavizacao = rmsInstantaneo > nivelVivo ? 0.55 : 0.18;
   nivelVivo = lerp(nivelVivo, rmsInstantaneo, fatorSuavizacao);
 
-  // Dot Matrix: posições e diâmetros fixos; RMS revela a máscara
-  const COLUNAS = NUM_BOLINHAS;
-  const LINHAS = 19;
-  const DOT_SIZE = 1;
-  const ESPACO_X = 21;
-  const ESPACO_Y = 5.8;
-  const ALTURA_MAX = 10;
-
-  const centroX = width / 2;
+  // Os centros ficam afastados pelo diâmetro máximo + 6 px de espaço livre.
+  const passo = DIAMETRO_MAX + ESPACO_BOLINHAS;
+  const larguraLinha = (NUM_BOLINHAS - 1) * passo;
+  const inicioX = (width - larguraLinha) / 2;
   const centroY = height / 2;
 
   noStroke();
   fill(COR_RUC);
 
-  for (let i = 0; i < COLUNAS; i++) {
+  for (let i = 0; i < NUM_BOLINHAS; i++) {
     const rmsBase = mapaRMSEstatico[i] || 0;
     let intensidade = rmsBase;
 
     if (!audioBuffer) {
       intensidade = 0.12;
-    } else if (!estaTocando) {
-      intensidade = rmsBase;
-    } else {
-      const posNorm = i / (COLUNAS - 1);
-      const distancia = abs(posNorm - progressoAudio);
-      const foco = exp(-pow(distancia / 0.13, 2));
+    } else if (estaTocando) {
+      const progressoBolinhas = i / (NUM_BOLINHAS - 1);
+      const distancia = abs(progressoBolinhas - progressoAudio);
+      const foco = exp(-pow(distancia / 0.12, 2));
 
-      intensidade =
-        rmsBase * 0.45 +
-        rmsBase * nivelVivo * 0.35 +
-        foco * nivelVivo * 0.55;
+      // O ponto correspondente à reprodução também reage ao RMS ao vivo.
+      intensidade = constrain(
+        rmsBase * 0.45 + rmsBase * nivelVivo * 0.25 + foco * nivelVivo * 0.65,
+        0,
+        1
+      );
     }
 
-    intensidade = constrain(intensidade, 0, 1);
-    const pontosAtivos = round(intensidade * ALTURA_MAX);
-    const x = centroX + (i - (COLUNAS - 1) / 2) * ESPACO_X;
-
-    for (let j = 0; j < LINHAS; j++) {
-      const distanciaCentro = abs(j - (LINHAS - 1) / 2);
-
-      if (distanciaCentro <= pontosAtivos) {
-        const y = centroY + (j - (LINHAS - 1) / 2) * ESPACO_Y;
-        circle(x, y, DOT_SIZE);
-      }
-    }
+    // O diâmetro aumenta de acordo com a intensidade RMS de cada segmento.
+    const diametro = 2 + intensidade * (DIAMETRO_MAX - 2);
+    const x = inicioX + i * passo;
+    circle(x, centroY, diametro);
   }
 }
 
-// Lê o ficheiro inteiro e extrai os 19 valores RMS estáticos com gradação espacial
+// Lê o ficheiro inteiro e extrai um valor RMS para cada uma das 19 bolinhas.
 function extrairMapaRMSEstatico(buffer) {
   let numCanais = buffer.numberOfChannels;
   let totalAmostras = buffer.length;
@@ -136,7 +122,7 @@ function extrairMapaRMSEstatico(buffer) {
     let somaQuadrados = 0;
     let contagem = 0;
 
-    // Passo de amostragem de 4 em 4 para leitura instantânea mesmo em ficheiros longos
+    // Amostragem de 4 em 4 para analisar rapidamente ficheiros longos.
     for (let s = inicio; s < fim; s += 4) {
       let amostraMono = 0;
       for (let c = 0; c < numCanais; c++) {
@@ -152,11 +138,9 @@ function extrairMapaRMSEstatico(buffer) {
   }
 
   let picoMax = Math.max(...rmsBrutos, 0.0001);
-
-  // Normaliza e aplica curva suave para destacar as nuances da voz
   let normalizados = rmsBrutos.map((v) => Math.pow(v / picoMax, 0.85));
 
-  // Aplica gradação espacial de Wucius Wong entre bolinhas vizinhas
+  // Suaviza ligeiramente as diferenças entre bolinhas vizinhas.
   let gradados = normalizados.map((val, i, arr) => {
     let ant = i > 0 ? arr[i - 1] : val;
     let prox = i < arr.length - 1 ? arr[i + 1] : val;
@@ -251,8 +235,6 @@ async function carregarAudio(ficheiro) {
 
     let arrayBuffer = await ficheiro.arrayBuffer();
     audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
-    // Preenche imediatamente o perfil RMS estático das 19 bolinhas
     mapaRMSEstatico = extrairMapaRMSEstatico(audioBuffer);
 
     elBtnPlay.disabled = false;
