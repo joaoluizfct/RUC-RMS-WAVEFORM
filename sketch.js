@@ -16,7 +16,7 @@ let paragemManual = false;
 // Canvas de exportação: 420 × 84 px; 19 colunas da matriz
 const LARGURA_FRAME = 420;
 const ALTURA_FRAME = 84;
-const NUM_BOLINHAS = 19;
+const NUM_BOLINHAS = 10;
 const COR_RUC = '#E31E24';
 
 // Mapa estático dos 19 valores RMS extraídos do áudio completo
