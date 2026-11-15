@@ -150,3 +150,137 @@ function draw() {
     circle(centroX, centroY, diametro);
   }
 }
+
+// Liga os controlos depois de o p5 criar o canvas. A ausência desta função
+// fazia o setup() falhar antes de o botão de importação receber o seu evento.
+function ligarInterface() {
+  elDropZone = select('#drop-zone');
+  elInputAudio = select('#input-audio');
+  elBtnImport = select('#btn-import');
+  elBtnPlay = select('#btn-play');
+  elBtnExport = select('#btn-export');
+  elSlider = select('#slider-sensibilidade');
+  elStatus = select('#status-texto');
+
+  if (!elInputAudio || !elBtnImport || !elSlider || !elStatus) {
+    console.error('Não foi possível inicializar os controlos de áudio.');
+    return;
+  }
+
+  elBtnImport.mousePressed(() => elInputAudio.elt.click());
+  elInputAudio.changed(lidarComInputAudio);
+
+  if (elBtnPlay) {
+    elBtnPlay.mousePressed(alternarReproducao);
+    elBtnPlay.elt.disabled = true;
+  }
+  if (elBtnExport) elBtnExport.elt.disabled = true;
+
+  if (elDropZone) {
+    elDropZone.elt.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      elDropZone.elt.classList.add('drag-over');
+    });
+    elDropZone.elt.addEventListener('dragleave', (event) => {
+      if (!elDropZone.elt.contains(event.relatedTarget)) {
+        elDropZone.elt.classList.remove('drag-over');
+      }
+    });
+    elDropZone.elt.addEventListener('drop', (event) => {
+      event.preventDefault();
+      elDropZone.elt.classList.remove('drag-over');
+      const ficheiro = event.dataTransfer && event.dataTransfer.files[0];
+      if (ficheiro) carregarFicheiroAudio(ficheiro);
+    });
+  }
+}
+
+function lidarComInputAudio() {
+  const ficheiro = elInputAudio && elInputAudio.elt.files[0];
+  if (ficheiro) carregarFicheiroAudio(ficheiro);
+}
+
+async function carregarFicheiroAudio(ficheiro) {
+  if (!ficheiro) return;
+
+  if (sourceNode) {
+    paragemManual = true;
+    sourceNode.onended = null;
+    sourceNode.stop();
+    sourceNode = null;
+  }
+  estaTocando = false;
+  offsetPausa = 0;
+  if (elBtnPlay) elBtnPlay.html('Tocar / Pausa');
+  atualizarEstado(`A carregar ${ficheiro.name}…`);
+
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) throw new Error('Este navegador não suporta áudio Web Audio.');
+    if (!audioCtx) audioCtx = new AudioContextClass();
+
+    const bytes = await ficheiro.arrayBuffer();
+    audioBuffer = await audioCtx.decodeAudioData(bytes);
+
+    analyserNode = audioCtx.createAnalyser();
+    analyserNode.fftSize = 2048;
+    dadosTempo = new Uint8Array(analyserNode.fftSize);
+    dadosFrequencia = new Float32Array(analyserNode.frequencyBinCount);
+
+    nomeFicheiroBase = ficheiro.name.replace(/\.[^.]+$/, '') || 'waveform-ruc';
+    if (elBtnPlay) elBtnPlay.elt.disabled = false;
+    atualizarEstado(`Áudio carregado: ${ficheiro.name}. Carrega em “Tocar / Pausa” para pré-visualizar a waveform.`);
+  } catch (erro) {
+    audioBuffer = null;
+    if (elBtnPlay) elBtnPlay.elt.disabled = true;
+    atualizarEstado(`Não foi possível importar o áudio: ${erro.message || erro}`);
+    console.error('Erro ao importar áudio:', erro);
+  }
+}
+
+async function alternarReproducao() {
+  if (!audioBuffer || !audioCtx) return;
+
+  try {
+    await audioCtx.resume();
+    if (estaTocando) {
+      offsetPausa = Math.min(audioBuffer.duration, offsetPausa + audioCtx.currentTime - tempoInicioCtx);
+      const fonte = sourceNode;
+      sourceNode = null;
+      estaTocando = false;
+      paragemManual = true;
+      if (fonte) fonte.stop();
+      if (elBtnPlay) elBtnPlay.html('Tocar / Pausa');
+      atualizarEstado('Reprodução em pausa.');
+      return;
+    }
+
+    if (offsetPausa >= audioBuffer.duration) offsetPausa = 0;
+    const fonte = audioCtx.createBufferSource();
+    fonte.buffer = audioBuffer;
+    fonte.connect(analyserNode);
+    analyserNode.connect(audioCtx.destination);
+    sourceNode = fonte;
+    estaTocando = true;
+    paragemManual = false;
+    tempoInicioCtx = audioCtx.currentTime;
+    fonte.onended = () => {
+      if (sourceNode !== fonte) return;
+      sourceNode = null;
+      estaTocando = false;
+      offsetPausa = 0;
+      if (elBtnPlay) elBtnPlay.html('Tocar / Pausa');
+      atualizarEstado('Reprodução terminada. Carrega em “Tocar / Pausa” para ouvir novamente.');
+    };
+    fonte.start(0, offsetPausa);
+    if (elBtnPlay) elBtnPlay.html('Pausa');
+    atualizarEstado('A reproduzir áudio.');
+  } catch (erro) {
+    atualizarEstado(`Não foi possível reproduzir o áudio: ${erro.message || erro}`);
+    console.error('Erro na reprodução:', erro);
+  }
+}
+
+function atualizarEstado(mensagem) {
+  if (elStatus) elStatus.elt.textContent = mensagem;
+}
