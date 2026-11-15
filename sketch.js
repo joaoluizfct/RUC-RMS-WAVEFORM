@@ -3,7 +3,6 @@ let audioBuffer = null;
 let sourceNode = null;
 let analyserNode = null;
 let dadosTempo = null;
-let dadosFrequencia = null;
 let streamDest = null;
 let ultimoUrlExportado = null;
 let nomeFicheiroBase = 'waveform-ruc';
@@ -13,20 +12,21 @@ let tempoInicioCtx = 0;
 let offsetPausa = 0;
 let paragemManual = false;
 
-// Especificações exatas do Figma (420 × 84 px, 19 bolinhas, 5x5 a 32x32, gap 6)
+// Especificações fixas: 420 × 84 px, 19 bolinhas ancoradas, 5×5 a 32×32 px
 const LARGURA_FRAME = 420;
 const ALTURA_FRAME = 84;
-const LARGURA_MAX_UTIL = 414;
 const NUM_BOLINHAS = 19;
-const ESPACO_BOLINHAS = 6;
 const DIAMETRO_MIN = 5;
 const DIAMETRO_MAX = 32;
 const COR_RUC = '#E31E24';
 
+// Margem lateral igual ao raio máximo (16px) para nunca cortar nas bordas da caixa
+const MARGEM_X = DIAMETRO_MAX / 2;
+const LARGURA_LINHA_FIXA = LARGURA_FRAME - MARGEM_X * 2;
+const PASSO_FIXO = LARGURA_LINHA_FIXA / (NUM_BOLINHAS - 1);
+
+let mapaRMSEstatico = Array.from({ length: NUM_BOLINHAS }, () => 0);
 let diametrosAtuais = Array.from({ length: NUM_BOLINHAS }, () => DIAMETRO_MIN);
-let graveSuave = 0;
-let medioSuave = 0;
-let agudoSuave = 0;
 let rmsSuave = 0;
 
 let gravando = false;
@@ -47,128 +47,112 @@ function draw() {
 
   const sensibilidade = elSlider ? parseFloat(elSlider.value()) : 1.3;
   let rmsInst = 0;
-  let graveInst = 0;
-  let medioInst = 0;
-  let agudoInst = 0;
+  let progressoAudio = 0;
 
-  if (estaTocando && audioBuffer && analyserNode && dadosTempo && dadosFrequencia) {
+  if (estaTocando && audioBuffer && analyserNode && dadosTempo) {
+    const tempoDecorrido = offsetPausa + (audioCtx.currentTime - tempoInicioCtx);
+    progressoAudio = constrain(tempoDecorrido / audioBuffer.duration, 0, 1);
+
+    // Leitura da energia RMS instantânea da voz
     analyserNode.getByteTimeDomainData(dadosTempo);
-    analyserNode.getFloatFrequencyData(dadosFrequencia);
-
-    // 1. Energia global da voz (RMS)
     let somaQuadrados = 0;
     for (const amostra of dadosTempo) {
-      const norm = (amostra - 128) / 128;
-      somaQuadrados += norm * norm;
+      const normalizado = (amostra - 128) / 128;
+      somaQuadrados += normalizado * normalizado;
     }
-    const rmsBruto = sqrt(somaQuadrados / dadosTempo.length);
-    rmsInst = constrain(pow(rmsBruto * 3.4 * sensibilidade, 0.85), 0, 1);
 
-    // 2. Três bandas vocais para esculpir múltiplas cristas ao longo das 19 bolinhas
-    graveInst = lerEnergiaBanda(85, 280, sensibilidade);     // corpo da voz (pico central)
-    medioInst = lerEnergiaBanda(300, 1400, sensibilidade);   // vogais/formantes (crista intermédia)
-    agudoInst = lerEnergiaBanda(1600, 6500, sensibilidade);  // consoantes/ataque (crista direita)
+    const rmsBruto = sqrt(somaQuadrados / dadosTempo.length);
+    rmsInst = constrain(pow(rmsBruto * 3.5 * sensibilidade, 0.85), 0, 1);
   }
 
-  // Ataque rápido na fala, decaimento fluido nas pausas
-  rmsSuave = lerp(rmsSuave, rmsInst, rmsInst > rmsSuave ? 0.52 : 0.2);
-  graveSuave = lerp(graveSuave, graveInst, graveInst > graveSuave ? 0.48 : 0.18);
-  medioSuave = lerp(medioSuave, medioInst, medioInst > medioSuave ? 0.55 : 0.22);
-  agudoSuave = lerp(agudoSuave, agudoInst, agudoInst > agudoSuave ? 0.6 : 0.25);
+  // Ataque rápido nas sílabas e decaimento fluido nas pausas de fala
+  const fatorSuavizacao = rmsInst > rmsSuave ? 0.55 : 0.22;
+  rmsSuave = lerp(rmsSuave, rmsInst, fatorSuavizacao);
 
-  const tempo = millis() * 0.004;
-
-  // Calcula a intensidade bruta de cada uma das 19 posições
-  const intensidadesBrutas = Array.from({ length: NUM_BOLINHAS }, (_, i) => {
-    const posNorm = i / (NUM_BOLINHAS - 1); // 0.0 (esquerda) -> 1.0 (direita)
-
-    // Envelope base de gradação (pontas sempre afiladas em 5px, centro encorpado)
-    const arcoBase = pow(sin(posNorm * PI), 1.35);
-
-    if (!estaTocando) {
-      // Estado em repouso/pausa: curva simétrica suave (5px nas pontas -> ~18px no centro)
-      return arcoBase * 0.42;
-    }
-
-    // Crista 1 (Principal): oscila organicamente em torno do centro (índices 7 a 10)
-    const centroPico1 = 0.46 + sin(tempo * 1.1) * 0.04 * medioSuave;
-    const pico1 = exp(-pow((posNorm - centroPico1) / 0.21, 2)) * (0.25 + 0.85 * max(rmsSuave, graveSuave));
-
-    // Crista 2 (Secundária): surge nas sílabas/vogais (índices 11 a 14) criando vale intermédio
-    const centroPico2 = 0.68 + cos(tempo * 1.6) * 0.03;
-    const pico2 = exp(-pow((posNorm - centroPico2) / 0.11, 2)) * medioSuave * 0.88;
-
-    // Crista 3 (Acento agudo): surge nas consoantes/ênfase (índices 15 a 17, antes da ponta de 5px)
-    const centroPico3 = 0.86;
-    const pico3 = exp(-pow((posNorm - centroPico3) / 0.075, 2)) * agudoSuave * 0.85;
-
-    // Combina as cristas respeitando o afilamento das pontas
-    const ondaCombinada = max(pico1, max(pico2, pico3));
-    const mascaraPontas = lerp(0.0, 1.0, pow(sin(posNorm * PI), 0.55));
-
-    return constrain(ondaCombinada * mascaraPontas, 0, 1);
-  });
-
-  // Aplica gradação espacial entre vizinhas para manter "semelhança de família"
-  const intensidadesGradadas = intensidadesBrutas.map((val, i, arr) => {
-    if (i === 0 || i === NUM_BOLINHAS - 1) return 0; // extremidades fixas em 5x5 px
-    const ant = arr[i - 1];
-    const prox = arr[i + 1];
-    return ant * 0.18 + val * 0.64 + prox * 0.18;
-  });
-
-  // Atualiza diâmetros finais (5px a 32px)
-  diametrosAtuais = diametrosAtuais.map((dAtual, i) => {
-    const dAlvo = lerp(DIAMETRO_MIN, DIAMETRO_MAX, intensidadesGradadas[i]);
-    return constrain(lerp(dAtual, dAlvo, 0.45), DIAMETRO_MIN, DIAMETRO_MAX);
-  });
-
-  // Posiciona em Auto Layout horizontal com 6px exatos entre bordas
-  const somaDiametros = diametrosAtuais.reduce((acc, d) => acc + d, 0);
-  const larguraTotalIdeal = somaDiametros + (NUM_BOLINHAS - 1) * ESPACO_BOLINHAS;
-
-  const escalaX = larguraTotalIdeal > LARGURA_MAX_UTIL ? LARGURA_MAX_UTIL / larguraTotalIdeal : 1;
-  const gapEfetivo = ESPACO_BOLINHAS * escalaX;
-  const larguraFinal = larguraTotalIdeal * escalaX;
-
-  let cursorX = (width - larguraFinal) / 2;
   const centroY = height / 2;
-
   noStroke();
   fill(COR_RUC);
 
   for (let i = 0; i < NUM_BOLINHAS; i++) {
-    const dDesenho = diametrosAtuais[i] * escalaX;
-    const centroX = cursorX + dDesenho / 2;
-    circle(centroX, centroY, dDesenho);
-    cursorX += dDesenho + gapEfetivo;
+    const posNorm = i / (NUM_BOLINHAS - 1);
+    const baseRMS = mapaRMSEstatico[i] || 0;
+    let intensidadeAlvo = 0;
+
+    if (!audioBuffer) {
+      // Estado inicial sem áudio: leve gradação em repouso
+      intensidadeAlvo = pow(sin(posNorm * PI), 1.4) * 0.12;
+    } else if (!estaTocando) {
+      // Áudio carregado em pausa: mostra a silhueta RMS estática
+      intensidadeAlvo = baseRMS * 0.45;
+    } else {
+      // Durante a reprodução: o RMS vivo dilata as bolinhas no seu eixo fixo
+      const distCursor = abs(posNorm - progressoAudio);
+      const realceCursor = exp(-pow(distCursor / 0.14, 2));
+
+      // Onda orgânica secundária acoplada ao RMS para dar vida à locução
+      const pulsoOrganico = 0.75 + 0.25 * sin(millis() * 0.012 + i * 0.85);
+
+      intensidadeAlvo =
+        baseRMS * rmsSuave * pulsoOrganico * 1.15 +
+        realceCursor * rmsSuave * 0.35;
+    }
+
+    intensidadeAlvo = constrain(intensidadeAlvo, 0, 1);
+    const diametroAlvo = lerp(DIAMETRO_MIN, DIAMETRO_MAX, intensidadeAlvo);
+
+    diametrosAtuais[i] = constrain(
+      lerp(diametrosAtuais[i], diametroAlvo, 0.42),
+      DIAMETRO_MIN,
+      DIAMETRO_MAX
+    );
+
+    // Posição X estritamente fixa: a largura da linha nunca muda, apenas o raio cresce
+    const centroX = MARGEM_X + i * PASSO_FIXO;
+    circle(centroX, centroY, diametrosAtuais[i]);
   }
 }
 
-function lerEnergiaBanda(freqMin, freqMax, sensibilidade) {
-  if (!dadosFrequencia || !audioCtx || !analyserNode) return 0;
+// Extrai os 19 valores RMS do ficheiro completo com gradação espacial entre vizinhas
+function extrairMapaRMSEstatico(buffer) {
+  const numCanais = buffer.numberOfChannels;
+  const totalAmostras = buffer.length;
+  const tamanhoSegmento = Math.max(1, Math.floor(totalAmostras / NUM_BOLINHAS));
 
-  const nyquist = audioCtx.sampleRate / 2;
-  const binInicio = Math.max(1, Math.floor((freqMin / nyquist) * dadosFrequencia.length));
-  const binFim = Math.min(dadosFrequencia.length - 1, Math.ceil((freqMax / nyquist) * dadosFrequencia.length));
+  const canais = Array.from({ length: numCanais }, (_, c) => buffer.getChannelData(c));
+  const rmsBrutos = [];
 
-  let somaPotencia = 0;
-  let contagem = 0;
+  for (let i = 0; i < NUM_BOLINHAS; i++) {
+    const inicio = i * tamanhoSegmento;
+    const fim = i === NUM_BOLINHAS - 1 ? totalAmostras : Math.min(totalAmostras, inicio + tamanhoSegmento);
+    let somaQuadrados = 0;
+    let contagem = 0;
 
-  for (let bin = binInicio; bin <= binFim; bin++) {
-    const db = dadosFrequencia[bin];
-    if (Number.isFinite(db)) {
-      const amp = Math.pow(10, db / 20);
-      somaPotencia += amp * amp;
+    for (let s = inicio; s < fim; s += 4) {
+      let amostraMono = 0;
+      for (let c = 0; c < numCanais; c++) {
+        amostraMono += canais[c][s];
+      }
+      amostraMono /= numCanais;
+      somaQuadrados += amostraMono * amostraMono;
       contagem++;
     }
+
+    const rms = contagem > 0 ? Math.sqrt(somaQuadrados / contagem) : 0;
+    rmsBrutos.push(rms);
   }
 
-  if (contagem === 0) return 0;
-  const rmsBanda = Math.sqrt(somaPotencia / contagem);
-  const dbBanda = 20 * Math.log10(Math.max(rmsBanda, 0.000001));
-  const norm = constrain((dbBanda + 58) / 36, 0, 1);
-  return constrain(pow(norm, 0.85) * sensibilidade, 0, 1);
+  const picoMax = Math.max(...rmsBrutos, 0.0001);
+  const normalizados = rmsBrutos.map((v) => Math.pow(v / picoMax, 0.8));
+
+  // Gradação espacial suave (Wucius Wong) para formar agrupamentos orgânicos
+  const gradados = normalizados.map((val, i, arr) => {
+    const ant = i > 0 ? arr[i - 1] : val;
+    const prox = i < arr.length - 1 ? arr[i + 1] : val;
+    return ant * 0.2 + val * 0.6 + prox * 0.2;
+  });
+
+  const picoGradado = Math.max(...gradados, 0.0001);
+  return gradados.map((v) => v / picoGradado);
 }
 
 function ligarInterface() {
@@ -236,10 +220,11 @@ async function carregarFicheiroAudio(ficheiro) {
   }
   estaTocando = false;
   offsetPausa = 0;
+  rmsSuave = 0;
 
   if (elBtnPlay) elBtnPlay.html('Tocar / Pausa');
   if (elBtnExport) elBtnExport.elt.disabled = true;
-  atualizarEstado(`A carregar ${ficheiro.name}…`);
+  atualizarEstado(`A analisar RMS de ${ficheiro.name}…`);
 
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -249,11 +234,12 @@ async function carregarFicheiroAudio(ficheiro) {
     const bytes = await ficheiro.arrayBuffer();
     audioBuffer = await audioCtx.decodeAudioData(bytes);
 
+    mapaRMSEstatico = extrairMapaRMSEstatico(audioBuffer);
+
     analyserNode = audioCtx.createAnalyser();
-    analyserNode.fftSize = 2048;
+    analyserNode.fftSize = 1024;
     analyserNode.connect(audioCtx.destination);
     dadosTempo = new Uint8Array(analyserNode.fftSize);
-    dadosFrequencia = new Float32Array(analyserNode.frequencyBinCount);
 
     nomeFicheiroBase = ficheiro.name
       .replace(/\.[^.]+$/, '')
@@ -279,7 +265,7 @@ async function alternarReproducao() {
   try {
     await audioCtx.resume();
     if (estaTocando) {
-      offsetPausa = Math.min(audioBuffer.duration, offsetPausa + audioCtx.currentTime - tempoInicioCtx);
+      offsetPausa = Math.min(audioBuffer.duration, offsetPausa + (audioCtx.currentTime - tempoInicioCtx));
       const fonte = sourceNode;
       sourceNode = null;
       estaTocando = false;
@@ -353,6 +339,7 @@ async function iniciarExportacao() {
     }
 
     offsetPausa = 0;
+    rmsSuave = 0;
     gravando = true;
     chunksGravacao = [];
 
