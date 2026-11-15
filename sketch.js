@@ -15,20 +15,40 @@ let tempoInicioCtx = 0;
 let offsetPausa = 0;
 let paragemManual = false;
 
-// Dimensões do Post 4x5 e coordenadas exatas do Figma (X: 60, Y: 1226, W: 420, H: 84)
-const LARGURA_POST = 1080;
-const ALTURA_POST = 1350;
-const WAVE_X = 60;
-const WAVE_Y = 1226;
+// Configurações de Formato (Post 4:5 vs Story 9:16)
+const FORMATOS = {
+  post: {
+    largura: 1080,
+    altura: 1350,
+    waveX: 60,
+    waveY: 1226,
+    label: 'POST 4:5 · 1080 × 1350 PX · WAVEFORM (60, 1226)'
+  },
+  story: {
+    largura: 1080,
+    altura: 1920,
+    waveX: 60,
+    waveY: 1633,
+    label: 'STORY 9:16 · 1080 × 1920 PX · WAVEFORM (60, 1633)'
+  }
+};
+
+const CORES_RUC = {
+  vermelho: '#C53030',
+  branco: '#F7F6ED'
+};
+
+let formatoAtual = 'post';
+let corAtual = CORES_RUC.vermelho;
+let extensaoEscolhida = 'mp4';
+
+// Especificações fixas da waveform (420 × 84 px, 19 bolinhas, 5×5 a 32×32 px)
 const WAVE_W = 420;
 const WAVE_H = 84;
-
 const NUM_BOLINHAS = 19;
 const DIAMETRO_MIN = 5;
 const DIAMETRO_MAX = 32;
-const COR_RUC = '#E31E24';
 
-// Linha fixa: os centros das 19 bolinhas nunca mudam de X, apenas o raio cresce
 const MARGEM_X = DIAMETRO_MAX / 2;
 const LARGURA_LINHA_FIXA = WAVE_W - MARGEM_X * 2;
 const PASSO_FIXO = LARGURA_LINHA_FIXA / (NUM_BOLINHAS - 1);
@@ -41,32 +61,41 @@ let gravando = false;
 let mediaRecorder = null;
 let chunksGravacao = [];
 
-let elDropZone, elInputImg, elInputAudio, elBtnImportImg, elBtnImportAudio, elBtnPlay, elBtnExport, elSlider, elStatus;
+// Referências DOM
+let elDropZone, elCanvasWrapper, elStageMeta;
+let elInputImg, elInputAudio, elBtnImportImg, elBtnImportAudio;
+let elBtnFmtPost, elBtnFmtStory, elBtnCorVermelho, elBtnCorBranco;
+let elBtnExtMp4, elBtnExtMov, elBtnPlay, elBtnExport;
+let elSlider, elSliderVal, elStatus, elPlayerTime, elCodecInfo;
 
 function setup() {
-  let cnv = createCanvas(LARGURA_POST, ALTURA_POST);
+  const cfg = FORMATOS[formatoAtual];
+  let cnv = createCanvas(cfg.largura, cfg.altura);
   cnv.parent('canvas-wrapper');
   pixelDensity(1);
   ligarInterface();
 }
 
 function draw() {
-  // 1. Camada de fundo (PNG exportado do Figma ou guia visual enquanto não é carregado)
+  const cfg = FORMATOS[formatoAtual];
+
+  // 1. Fundo (PNG do Figma ou guia visual)
   if (imagemFundo) {
-    background(0);
+    background('#121212');
     image(imagemFundo, 0, 0, width, height);
   } else {
-    desenharGuiaSemImagem();
+    desenharGuiaSemImagem(cfg);
   }
 
-  // 2. Cálculo da energia RMS da voz
-  const sensibilidade = elSlider ? parseFloat(elSlider.value()) : 1.3;
+  // 2. Leitura RMS da voz e atualização do tempo
+  const sensibilidade = elSlider ? parseFloat(elSlider.value) : 1.3;
   let rmsInst = 0;
   let progressoAudio = 0;
+  let tempoAtual = offsetPausa;
 
   if (estaTocando && audioBuffer && analyserNode && dadosTempo) {
-    const tempoDecorrido = offsetPausa + (audioCtx.currentTime - tempoInicioCtx);
-    progressoAudio = constrain(tempoDecorrido / audioBuffer.duration, 0, 1);
+    tempoAtual = constrain(offsetPausa + (audioCtx.currentTime - tempoInicioCtx), 0, audioBuffer.duration);
+    progressoAudio = constrain(tempoAtual / audioBuffer.duration, 0, 1);
 
     analyserNode.getByteTimeDomainData(dadosTempo);
     let somaQuadrados = 0;
@@ -79,13 +108,15 @@ function draw() {
     rmsInst = constrain(pow(rmsBruto * 3.5 * sensibilidade, 0.85), 0, 1);
   }
 
+  atualizarTempoUI(tempoAtual, audioBuffer ? audioBuffer.duration : 0);
+
   const fatorSuavizacao = rmsInst > rmsSuave ? 0.55 : 0.22;
   rmsSuave = lerp(rmsSuave, rmsInst, fatorSuavizacao);
 
-  // 3. Desenho das 19 bolinhas ancoradas na posição X:60, Y:1226
-  const centroY = WAVE_Y + WAVE_H / 2;
+  // 3. Desenho das 19 bolinhas fixas nas coordenadas exatas do formato ativo
+  const centroY = cfg.waveY + WAVE_H / 2;
   noStroke();
-  fill(COR_RUC);
+  fill(corAtual);
 
   for (let i = 0; i < NUM_BOLINHAS; i++) {
     const posNorm = i / (NUM_BOLINHAS - 1);
@@ -115,29 +146,41 @@ function draw() {
       DIAMETRO_MAX
     );
 
-    const centroX = WAVE_X + MARGEM_X + i * PASSO_FIXO;
+    const centroX = cfg.waveX + MARGEM_X + i * PASSO_FIXO;
     circle(centroX, centroY, diametrosAtuais[i]);
   }
 }
 
-function desenharGuiaSemImagem() {
-  background('#18181b');
+function desenharGuiaSemImagem(cfg) {
+  background('#141414');
 
-  // Marcação subtil da área da waveform (X:60, Y:1226, 420x84)
+  // Grelha subtil de referência
+  stroke(255, 255, 255, 14);
+  strokeWeight(1);
+  line(60, 0, 60, height);
+  line(width - 60, 0, width - 60, height);
+
+  // Caixa exata da waveform (X: 60, Y: 1226 ou 1633)
   noFill();
-  stroke(255, 255, 255, 45);
+  stroke(255, 255, 255, 65);
   strokeWeight(2);
-  rect(WAVE_X, WAVE_Y, WAVE_W, WAVE_H, 8);
+  rect(cfg.waveX, cfg.waveY, WAVE_W, WAVE_H);
 
   noStroke();
-  fill(255, 255, 255, 160);
+  fill('#F7F6ED');
   textAlign(CENTER, CENTER);
+  textFont('Archivo Narrow, Inter, sans-serif');
+  textSize(34);
+  text(
+    formatoAtual === 'story' ? 'STORY 9:16 (1080 × 1920)' : 'POST FEED 4:5 (1080 × 1350)',
+    width / 2,
+    height / 2 - 22
+  );
+
   textFont('Inter, sans-serif');
-  textSize(28);
-  text('Pré-visualização do Post (1080 × 1350)', width / 2, height / 2 - 20);
   textSize(20);
-  fill(255, 255, 255, 100);
-  text('Importa o PNG do Figma para preencher o fundo', width / 2, height / 2 + 22);
+  fill('#9A9A95');
+  text('Importa o PNG exportado do Figma para preencher o fundo', width / 2, height / 2 + 24);
 }
 
 function extrairMapaRMSEstatico(buffer) {
@@ -182,55 +225,108 @@ function extrairMapaRMSEstatico(buffer) {
 }
 
 function ligarInterface() {
-  elDropZone = select('#drop-zone');
-  elInputImg = select('#input-imagem');
-  elInputAudio = select('#input-audio');
-  elBtnImportImg = select('#btn-import-img');
-  elBtnImportAudio = select('#btn-import-audio');
-  elBtnPlay = select('#btn-play');
-  elBtnExport = select('#btn-export');
-  elSlider = select('#slider-sensibilidade');
-  elStatus = select('#status-texto');
+  elDropZone = document.getElementById('drop-zone');
+  elCanvasWrapper = document.getElementById('canvas-wrapper');
+  elStageMeta = document.getElementById('stage-meta');
 
-  elBtnImportImg.mousePressed(() => {
-    elInputImg.elt.value = '';
-    elInputImg.elt.click();
+  elInputImg = document.getElementById('input-imagem');
+  elInputAudio = document.getElementById('input-audio');
+  elBtnImportImg = document.getElementById('btn-import-img');
+  elBtnImportAudio = document.getElementById('btn-import-audio');
+
+  elBtnFmtPost = document.getElementById('btn-fmt-post');
+  elBtnFmtStory = document.getElementById('btn-fmt-story');
+
+  elBtnCorVermelho = document.getElementById('btn-cor-vermelho');
+  elBtnCorBranco = document.getElementById('btn-cor-branco');
+
+  elBtnExtMp4 = document.getElementById('btn-ext-mp4');
+  elBtnExtMov = document.getElementById('btn-ext-mov');
+
+  elBtnPlay = document.getElementById('btn-play');
+  elBtnExport = document.getElementById('btn-export');
+  elSlider = document.getElementById('slider-sensibilidade');
+  elSliderVal = document.getElementById('slider-val');
+  elStatus = document.getElementById('status-texto');
+  elPlayerTime = document.getElementById('player-time');
+  elCodecInfo = document.getElementById('codec-info');
+
+  // Importação
+  elBtnImportImg.addEventListener('click', () => {
+    if (gravando) return;
+    elInputImg.value = '';
+    elInputImg.click();
   });
-  elInputImg.changed(() => {
-    const ficheiro = elInputImg.elt.files[0];
-    if (ficheiro) carregarFicheiroImagem(ficheiro);
+  elInputImg.addEventListener('change', () => {
+    if (elInputImg.files[0]) carregarFicheiroImagem(elInputImg.files[0]);
   });
 
-  elBtnImportAudio.mousePressed(() => {
-    elInputAudio.elt.value = '';
-    elInputAudio.elt.click();
+  elBtnImportAudio.addEventListener('click', () => {
+    if (gravando) return;
+    elInputAudio.value = '';
+    elInputAudio.click();
   });
-  elInputAudio.changed(() => {
-    const ficheiro = elInputAudio.elt.files[0];
-    if (ficheiro) carregarFicheiroAudio(ficheiro);
-  });
-
-  elBtnPlay.mousePressed(alternarReproducao);
-  elBtnExport.mousePressed(iniciarExportacao);
-
-  // Suporte para arrastar PNG e Áudio ao mesmo tempo ou em separado
-  elDropZone.elt.addEventListener('dragover', (event) => {
-    event.preventDefault();
-    elDropZone.elt.classList.add('drag-over');
+  elInputAudio.addEventListener('change', () => {
+    if (elInputAudio.files[0]) carregarFicheiroAudio(elInputAudio.files[0]);
   });
 
-  elDropZone.elt.addEventListener('dragleave', (event) => {
-    if (!elDropZone.elt.contains(event.relatedTarget)) {
-      elDropZone.elt.classList.remove('drag-over');
+  // Seletor de Formato (Post 4:5 vs Story 9:16)
+  elBtnFmtPost.addEventListener('click', () => alterarFormato('post'));
+  elBtnFmtStory.addEventListener('click', () => alterarFormato('story'));
+
+  // Seletor de Cor (#C53030 vs #F7F6ED)
+  elBtnCorVermelho.addEventListener('click', () => {
+    corAtual = CORES_RUC.vermelho;
+    elBtnCorVermelho.classList.add('active');
+    elBtnCorBranco.classList.remove('active');
+  });
+
+  elBtnCorBranco.addEventListener('click', () => {
+    corAtual = CORES_RUC.branco;
+    elBtnCorBranco.classList.add('active');
+    elBtnCorVermelho.classList.remove('active');
+  });
+
+  // Seletor de Extensão (.mp4 vs .mov em H.264)
+  elBtnExtMp4.addEventListener('click', () => {
+    extensaoEscolhida = 'mp4';
+    elBtnExtMp4.classList.add('active');
+    elBtnExtMov.classList.remove('active');
+  });
+
+  elBtnExtMov.addEventListener('click', () => {
+    extensaoEscolhida = 'mov';
+    elBtnExtMov.classList.add('active');
+    elBtnExtMp4.classList.remove('active');
+  });
+
+  // Slider
+  elSlider.addEventListener('input', () => {
+    elSliderVal.textContent = `${parseFloat(elSlider.value).toFixed(2)}×`;
+  });
+
+  // Reprodução e Exportação
+  elBtnPlay.addEventListener('click', alternarReproducao);
+  elBtnExport.addEventListener('click', iniciarExportacao);
+
+  // Drag & Drop global
+  elDropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    elDropZone.classList.add('drag-over');
+  });
+
+  elDropZone.addEventListener('dragleave', (e) => {
+    if (!elDropZone.contains(e.relatedTarget)) {
+      elDropZone.classList.remove('drag-over');
     }
   });
 
-  elDropZone.elt.addEventListener('drop', (event) => {
-    event.preventDefault();
-    elDropZone.elt.classList.remove('drag-over');
-    if (!event.dataTransfer || !event.dataTransfer.files) return;
+  elDropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    elDropZone.classList.remove('drag-over');
+    if (gravando || !e.dataTransfer || !e.dataTransfer.files) return;
 
-    Array.from(event.dataTransfer.files).forEach((ficheiro) => {
+    Array.from(e.dataTransfer.files).forEach((ficheiro) => {
       if (ficheiro.type.startsWith('image/')) {
         carregarFicheiroImagem(ficheiro);
       } else if (
@@ -241,6 +337,33 @@ function ligarInterface() {
       }
     });
   });
+
+  // Indica o suporte H.264 detetado no navegador atual
+  const fmtDetetado = escolherFormatoVideo();
+  if (fmtDetetado.suportaH264) {
+    elCodecInfo.textContent = 'Codec H.264 + AAC ativo (compatível com iPhone/iOS, QuickTime e PC).';
+  } else {
+    elCodecInfo.textContent = 'Aviso: este navegador não expõe H.264; usa Chrome, Edge ou Safari para compatibilidade iOS.';
+  }
+}
+
+function alterarFormato(novoFormato) {
+  if (gravando || formatoAtual === novoFormato) return;
+  formatoAtual = novoFormato;
+  const cfg = FORMATOS[formatoAtual];
+
+  resizeCanvas(cfg.largura, cfg.altura);
+  elStageMeta.textContent = cfg.label;
+
+  if (formatoAtual === 'story') {
+    elCanvasWrapper.classList.add('is-story');
+    elBtnFmtStory.classList.add('active');
+    elBtnFmtPost.classList.remove('active');
+  } else {
+    elCanvasWrapper.classList.remove('is-story');
+    elBtnFmtPost.classList.add('active');
+    elBtnFmtStory.classList.remove('active');
+  }
 }
 
 function carregarFicheiroImagem(ficheiro) {
@@ -254,22 +377,29 @@ function carregarFicheiroImagem(ficheiro) {
       ultimoUrlImagem = urlTemp;
       imagemFundo = img;
 
+      // Ajusta automaticamente para Story se a imagem importada tiver proporção 9:16
+      if (img.height > img.width * 1.5 && formatoAtual !== 'story') {
+        alterarFormato('story');
+      } else if (img.height <= img.width * 1.5 && formatoAtual !== 'post') {
+        alterarFormato('post');
+      }
+
       if (!audioBuffer) {
         nomeFicheiroBase = ficheiro.name
           .replace(/\.[^.]+$/, '')
           .toLowerCase()
-          .replace(/[^a-z0-9-_]+/g, '-') || 'post-ruc';
+          .replace(/[^a-z0-9-_]+/g, '-') || 'ruc-post';
       }
 
       atualizarEstado(
         audioBuffer
-          ? `Pronto para exportar! Imagem e áudio carregados.`
-          : `Imagem carregada (${img.width}×${img.height}px). Agora importa o áudio.`
+          ? `Pronto para exportar (${img.width}×${img.height}px + áudio carregado).`
+          : `Imagem carregada (${img.width}×${img.height}px). Importa agora o áudio.`
       );
     },
     () => {
       URL.revokeObjectURL(urlTemp);
-      atualizarEstado('Não foi possível ler a imagem. Usa um ficheiro PNG ou JPG válido.');
+      atualizarEstado('Não foi possível ler a imagem. Usa um PNG ou JPG válido.');
     }
   );
 }
@@ -285,8 +415,8 @@ async function carregarFicheiroAudio(ficheiro) {
   offsetPausa = 0;
   rmsSuave = 0;
 
-  elBtnPlay.html('Tocar / Pausa');
-  elBtnExport.elt.disabled = true;
+  elBtnPlay.textContent = '▶ Tocar';
+  elBtnExport.disabled = true;
   atualizarEstado(`A analisar RMS de ${ficheiro.name}…`);
 
   try {
@@ -307,20 +437,21 @@ async function carregarFicheiroAudio(ficheiro) {
     nomeFicheiroBase = ficheiro.name
       .replace(/\.[^.]+$/, '')
       .toLowerCase()
-      .replace(/[^a-z0-9-_]+/g, '-') || 'post-ruc';
+      .replace(/[^a-z0-9-_]+/g, '-') || 'ruc-post';
 
-    elBtnPlay.elt.disabled = false;
-    elBtnExport.elt.disabled = false;
+    elBtnPlay.disabled = false;
+    elBtnExport.disabled = false;
+    atualizarTempoUI(0, audioBuffer.duration);
 
     atualizarEstado(
       imagemFundo
-        ? `Pronto para exportar! Áudio: ${ficheiro.name} (${audioBuffer.duration.toFixed(1)}s).`
-        : `Áudio carregado (${audioBuffer.duration.toFixed(1)}s). Importa também o PNG do post.`
+        ? `Pronto: ${ficheiro.name} (${formatarSegundos(audioBuffer.duration)}).`
+        : `Áudio carregado (${formatarSegundos(audioBuffer.duration)}). Importa também o PNG do layout.`
     );
   } catch (erro) {
     audioBuffer = null;
-    elBtnPlay.elt.disabled = true;
-    elBtnExport.elt.disabled = true;
+    elBtnPlay.disabled = true;
+    elBtnExport.disabled = true;
     atualizarEstado(`Erro ao importar áudio: ${erro.message || erro}`);
     console.error(erro);
   }
@@ -340,7 +471,7 @@ async function alternarReproducao() {
       if (fonte) {
         try { fonte.stop(); } catch (e) {}
       }
-      elBtnPlay.html('Tocar / Pausa');
+      elBtnPlay.textContent = '▶ Tocar';
       atualizarEstado('Reprodução em pausa.');
       return;
     }
@@ -348,7 +479,7 @@ async function alternarReproducao() {
     if (offsetPausa >= audioBuffer.duration) offsetPausa = 0;
     iniciarFonteAudio(offsetPausa, false);
 
-    elBtnPlay.html('Pausa');
+    elBtnPlay.textContent = '❚❚ Pausa';
     atualizarEstado('A reproduzir pré-visualização.');
   } catch (erro) {
     atualizarEstado(`Erro na reprodução: ${erro.message || erro}`);
@@ -374,7 +505,7 @@ function iniciarFonteAudio(inicioSegundos, paraGravacao) {
     sourceNode = null;
     estaTocando = false;
     offsetPausa = 0;
-    elBtnPlay.html('Tocar / Pausa');
+    elBtnPlay.textContent = '▶ Tocar';
 
     if (gravando) {
       finalizarExportacao();
@@ -386,21 +517,43 @@ function iniciarFonteAudio(inicioSegundos, paraGravacao) {
   fonte.start(0, inicioSegundos);
 }
 
+// Prioriza H.264 Constrained Baseline (avc1.42E01E) + AAC para compatibilidade total com iOS/iPhone e PC
 function escolherFormatoVideo() {
-  const candidatos = [
-    { mime: 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', ext: 'mp4' },
-    { mime: 'video/mp4;codecs=avc1,mp4a.40.2', ext: 'mp4' },
-    { mime: 'video/mp4', ext: 'mp4' },
-    { mime: 'video/webm;codecs=vp9,opus', ext: 'webm' },
-    { mime: 'video/webm', ext: 'webm' }
+  const candidatosH264 = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4;codecs=avc1.4D401E,mp4a.40.2',
+    'video/mp4;codecs=avc1.640028,mp4a.40.2',
+    'video/mp4;codecs=avc1,mp4a.40.2',
+    'video/mp4;codecs=h264,aac',
+    'video/mp4'
   ];
 
-  for (const item of candidatos) {
-    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(item.mime)) {
-      return item;
+  if (typeof MediaRecorder !== 'undefined') {
+    for (const mime of candidatosH264) {
+      if (MediaRecorder.isTypeSupported(mime)) {
+        return { mime, suportaH264: true };
+      }
+    }
+    if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
+      return { mime: 'video/webm;codecs=vp9,opus', suportaH264: false };
+    }
+    if (MediaRecorder.isTypeSupported('video/webm')) {
+      return { mime: 'video/webm', suportaH264: false };
     }
   }
-  return { mime: '', ext: 'webm' };
+
+  return { mime: '', suportaH264: false };
+}
+
+function alternarBloqueioUI(bloqueado) {
+  elBtnImportImg.disabled = bloqueado;
+  elBtnImportAudio.disabled = bloqueado;
+  elBtnFmtPost.disabled = bloqueado;
+  elBtnFmtStory.disabled = bloqueado;
+  elBtnExtMp4.disabled = bloqueado;
+  elBtnExtMov.disabled = bloqueado;
+  elBtnPlay.disabled = bloqueado;
+  elBtnExport.disabled = bloqueado;
 }
 
 async function iniciarExportacao() {
@@ -426,13 +579,13 @@ async function iniciarExportacao() {
     gravando = true;
     chunksGravacao = [];
 
-    elBtnImportImg.elt.disabled = true;
-    elBtnImportAudio.elt.disabled = true;
-    elBtnPlay.elt.disabled = true;
-    elBtnExport.elt.disabled = true;
+    alternarBloqueioUI(true);
 
-    const formato = escolherFormatoVideo();
-    atualizarEstado(`A gravar vídeo final (${formato.ext.toUpperCase()} 1080×1350)… Aguarda o fim do áudio.`);
+    const cfg = FORMATOS[formatoAtual];
+    const formatoVideo = escolherFormatoVideo();
+    const extFinal = formatoVideo.suportaH264 ? extensaoEscolhida : 'webm';
+
+    atualizarEstado(`A gravar ${extFinal.toUpperCase()} H.264 (${cfg.largura}×${cfg.altura})… Aguarda o fim do áudio.`);
 
     const canvasEl = document.querySelector('#canvas-wrapper canvas');
     const canvasStream = canvasEl.captureStream(60);
@@ -443,18 +596,23 @@ async function iniciarExportacao() {
       ...streamDest.stream.getAudioTracks()
     ]);
 
-    const opcoes = { videoBitsPerSecond: 8000000 };
-    if (formato.mime) opcoes.mimeType = formato.mime;
+    const opcoes = {
+      videoBitsPerSecond: 10000000,
+      audioBitsPerSecond: 192000
+    };
+    if (formatoVideo.mime) opcoes.mimeType = formatoVideo.mime;
 
     mediaRecorder = new MediaRecorder(streamFinal, opcoes);
 
     mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksGravacao.push(e.data);
+      if (e.data && e.data.size > 0) chunksGravacao.push(e.data);
     };
 
     mediaRecorder.onstop = () => {
-      const nomeSaida = `${nomeFicheiroBase}-post.${formato.ext}`;
-      const tipoBlob = formato.mime || `video/${formato.ext}`;
+      const sufixoFmt = formatoAtual === 'story' ? 'story' : 'post';
+      const nomeSaida = `${nomeFicheiroBase}-${sufixoFmt}.${extFinal}`;
+      const tipoBlob = formatoVideo.mime || (extFinal === 'mov' ? 'video/quicktime' : 'video/mp4');
+
       const blob = new Blob(chunksGravacao, { type: tipoBlob });
       ultimoUrlExportado = URL.createObjectURL(blob);
 
@@ -463,24 +621,18 @@ async function iniciarExportacao() {
       linkAuto.download = nomeSaida;
       linkAuto.click();
 
-      elStatus.elt.innerHTML = `Concluído! Ficheiro transferido: <a href="${ultimoUrlExportado}" download="${nomeSaida}">${nomeSaida}</a>`;
+      elStatus.innerHTML = `Exportação concluída: <a href="${ultimoUrlExportado}" download="${nomeSaida}">Descarregar ${nomeSaida}</a>`;
 
       gravando = false;
       streamDest = null;
-      elBtnImportImg.elt.disabled = false;
-      elBtnImportAudio.elt.disabled = false;
-      elBtnPlay.elt.disabled = false;
-      elBtnExport.elt.disabled = false;
+      alternarBloqueioUI(false);
     };
 
-    mediaRecorder.start();
+    mediaRecorder.start(250);
     iniciarFonteAudio(0, true);
   } catch (erro) {
     gravando = false;
-    elBtnImportImg.elt.disabled = false;
-    elBtnImportAudio.elt.disabled = false;
-    elBtnPlay.elt.disabled = false;
-    elBtnExport.elt.disabled = false;
+    alternarBloqueioUI(false);
     atualizarEstado(`Erro ao exportar: ${erro.message || erro}`);
     console.error(erro);
   }
@@ -494,6 +646,19 @@ function finalizarExportacao() {
   }
 }
 
+function formatarSegundos(seg) {
+  if (!Number.isFinite(seg) || seg < 0) return '00:00';
+  const mins = Math.floor(seg / 60);
+  const secs = Math.floor(seg % 60);
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function atualizarTempoUI(atual, total) {
+  if (elPlayerTime) {
+    elPlayerTime.textContent = `${formatarSegundos(atual)} / ${formatarSegundos(total)}`;
+  }
+}
+
 function atualizarEstado(mensagem) {
-  if (elStatus) elStatus.elt.textContent = mensagem;
+  if (elStatus) elStatus.textContent = mensagem;
 }
