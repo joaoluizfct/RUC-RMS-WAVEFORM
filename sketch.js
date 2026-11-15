@@ -13,39 +13,27 @@ let tempoInicioCtx = 0;
 let offsetPausa = 0;
 let paragemManual = false;
 
-// Canvas de exportação: 420 × 84 px
+// Especificações exatas do Figma (420 × 84 px, 19 bolinhas, 5x5 a 32x32, gap 6)
 const LARGURA_FRAME = 420;
 const ALTURA_FRAME = 84;
-const NUM_BOLINHAS_BASE = 19;
-const NUM_BOLINHAS_MIN = 11;
-const NUM_BOLINHAS_MAX = 42;
-const COR_RUC = '#E31E24';
+const LARGURA_MAX_UTIL = 414;
+const NUM_BOLINHAS = 19;
 const ESPACO_BOLINHAS = 6;
-const DIAMETRO_MIN = 4;
-const DIAMETRO_MAX = 24;
-const FREQUENCIA_MIN = 80;
-const FREQUENCIA_MAX = 10000;
+const DIAMETRO_MIN = 5;
+const DIAMETRO_MAX = 32;
+const COR_RUC = '#E31E24';
 
-let numBolinhasAtuais = NUM_BOLINHAS_BASE;
-let niveisBolinha = Array.from({ length: numBolinhasAtuais }, () => 0);
+let diametrosAtuais = Array.from({ length: NUM_BOLINHAS }, () => DIAMETRO_MIN);
+let graveSuave = 0;
+let medioSuave = 0;
+let agudoSuave = 0;
+let rmsSuave = 0;
 
 let gravando = false;
 let mediaRecorder = null;
 let chunksGravacao = [];
 
 let elDropZone, elInputAudio, elBtnImport, elBtnPlay, elBtnExport, elSlider, elStatus;
-
-function ajusteBolhasTamanho(novoTamanho) {
-  if (novoTamanho === niveisBolinha.length) return;
-
-  if (novoTamanho > niveisBolinha.length) {
-    for (let i = niveisBolinha.length; i < novoTamanho; i++) {
-      niveisBolinha.push(0);
-    }
-  } else {
-    niveisBolinha.length = novoTamanho;
-  }
-}
 
 function setup() {
   let cnv = createCanvas(LARGURA_FRAME, ALTURA_FRAME);
@@ -57,102 +45,132 @@ function setup() {
 function draw() {
   clear();
 
-  const sensibilidade = parseFloat(elSlider.value);
-  let energiaVoz = 0;
+  const sensibilidade = elSlider ? parseFloat(elSlider.value()) : 1.3;
+  let rmsInst = 0;
+  let graveInst = 0;
+  let medioInst = 0;
+  let agudoInst = 0;
 
   if (estaTocando && audioBuffer && analyserNode && dadosTempo && dadosFrequencia) {
     analyserNode.getByteTimeDomainData(dadosTempo);
     analyserNode.getFloatFrequencyData(dadosFrequencia);
 
+    // 1. Energia global da voz (RMS)
     let somaQuadrados = 0;
     for (const amostra of dadosTempo) {
-      const normalizado = (amostra - 128) / 128;
-      somaQuadrados += normalizado * normalizado;
+      const norm = (amostra - 128) / 128;
+      somaQuadrados += norm * norm;
     }
-    const rmsGlobal = sqrt(somaQuadrados / dadosTempo.length);
+    const rmsBruto = sqrt(somaQuadrados / dadosTempo.length);
+    rmsInst = constrain(pow(rmsBruto * 3.4 * sensibilidade, 0.85), 0, 1);
 
-    if (rmsGlobal > 0.003) {
-      const frequenciaFinal = Math.min(FREQUENCIA_MAX, audioCtx.sampleRate / 2);
-      const frequenciaInicial = Math.min(FREQUENCIA_MIN, frequenciaFinal / 2);
-      const razaoFrequencias = frequenciaFinal / frequenciaInicial;
-
-      const niveisAlvoTemp = Array.from({ length: numBolinhasAtuais }, () => 0);
-
-      for (let i = 0; i < numBolinhasAtuais; i++) {
-        const limiteInferior = frequenciaInicial * Math.pow(razaoFrequencias, i / numBolinhasAtuais);
-        const limiteSuperior = frequenciaInicial * Math.pow(razaoFrequencias, (i + 1) / numBolinhasAtuais);
-        const binInicial = Math.max(0, Math.floor(limiteInferior * analyserNode.fftSize / audioCtx.sampleRate));
-        const binFinal = Math.min(
-          dadosFrequencia.length,
-          Math.max(binInicial + 1, Math.ceil(limiteSuperior * analyserNode.fftSize / audioCtx.sampleRate))
-        );
-
-        let somaPotencia = 0;
-        let numeroBins = 0;
-        for (let bin = binInicial; bin < binFinal; bin++) {
-          const db = dadosFrequencia[bin];
-          if (Number.isFinite(db)) {
-            const amplitude = Math.pow(10, db / 20);
-            somaPotencia += amplitude * amplitude;
-            numeroBins++;
-          }
-        }
-
-        const rmsFaixa = numeroBins > 0 ? Math.sqrt(somaPotencia / numeroBins) : 0;
-        const dbFaixa = 20 * Math.log10(Math.max(rmsFaixa, 0.000001));
-        const intensidade = constrain((dbFaixa + 62) / 42, 0, 1);
-        niveisAlvoTemp[i] = pow(intensidade, 0.8) * sensibilidade;
-      }
-
-      energiaVoz = constrain((rmsGlobal - 0.003) / 0.045, 0, 1);
-
-      const alvoTotalBolhas = Math.round(lerp(NUM_BOLINHAS_MIN, NUM_BOLINHAS_MAX, energiaVoz));
-      numBolinhasAtuais = lerp(numBolinhasAtuais, alvoTotalBolhas, 0.12);
-      numBolinhasAtuais = constrain(numBolinhasAtuais, NUM_BOLINHAS_MIN, NUM_BOLINHAS_MAX);
-
-      ajusteBolhasTamanho(Math.round(numBolinhasAtuais));
-
-      for (let i = 0; i < niveisBolinha.length; i++) {
-        const alvo = i < niveisAlvoTemp.length ? niveisAlvoTemp[i] : 0;
-        const fatorSuavizacao = alvo > niveisBolinha[i] ? 0.7 : 0.18;
-        niveisBolinha[i] = lerp(niveisBolinha[i], alvo, fatorSuavizacao);
-      }
-    } else {
-      const alvoTotalBolhas = NUM_BOLINHAS_MIN;
-      numBolinhasAtuais = lerp(numBolinhasAtuais, alvoTotalBolhas, 0.18);
-      ajusteBolhasTamanho(Math.round(numBolinhasAtuais));
-
-      for (let i = 0; i < niveisBolinha.length; i++) {
-        niveisBolinha[i] = lerp(niveisBolinha[i], 0, 0.2);
-      }
-    }
-  } else {
-    const alvoTotalBolhas = NUM_BOLINHAS_MIN;
-    numBolinhasAtuais = lerp(numBolinhasAtuais, alvoTotalBolhas, 0.18);
-    ajusteBolhasTamanho(Math.round(numBolinhasAtuais));
-
-    for (let i = 0; i < niveisBolinha.length; i++) {
-      niveisBolinha[i] = lerp(niveisBolinha[i], 0, 0.18);
-    }
+    // 2. Três bandas vocais para esculpir múltiplas cristas ao longo das 19 bolinhas
+    graveInst = lerEnergiaBanda(85, 280, sensibilidade);     // corpo da voz (pico central)
+    medioInst = lerEnergiaBanda(300, 1400, sensibilidade);   // vogais/formantes (crista intermédia)
+    agudoInst = lerEnergiaBanda(1600, 6500, sensibilidade);  // consoantes/ataque (crista direita)
   }
 
-  const passo = width / Math.max(1, numBolinhasAtuais);
-  const diametroMaximoVisivel = Math.min(DIAMETRO_MAX, passo - ESPACO_BOLINHAS);
+  // Ataque rápido na fala, decaimento fluido nas pausas
+  rmsSuave = lerp(rmsSuave, rmsInst, rmsInst > rmsSuave ? 0.52 : 0.2);
+  graveSuave = lerp(graveSuave, graveInst, graveInst > graveSuave ? 0.48 : 0.18);
+  medioSuave = lerp(medioSuave, medioInst, medioInst > medioSuave ? 0.55 : 0.22);
+  agudoSuave = lerp(agudoSuave, agudoInst, agudoInst > agudoSuave ? 0.6 : 0.25);
+
+  const tempo = millis() * 0.004;
+
+  // Calcula a intensidade bruta de cada uma das 19 posições
+  const intensidadesBrutas = Array.from({ length: NUM_BOLINHAS }, (_, i) => {
+    const posNorm = i / (NUM_BOLINHAS - 1); // 0.0 (esquerda) -> 1.0 (direita)
+
+    // Envelope base de gradação (pontas sempre afiladas em 5px, centro encorpado)
+    const arcoBase = pow(sin(posNorm * PI), 1.35);
+
+    if (!estaTocando) {
+      // Estado em repouso/pausa: curva simétrica suave (5px nas pontas -> ~18px no centro)
+      return arcoBase * 0.42;
+    }
+
+    // Crista 1 (Principal): oscila organicamente em torno do centro (índices 7 a 10)
+    const centroPico1 = 0.46 + sin(tempo * 1.1) * 0.04 * medioSuave;
+    const pico1 = exp(-pow((posNorm - centroPico1) / 0.21, 2)) * (0.25 + 0.85 * max(rmsSuave, graveSuave));
+
+    // Crista 2 (Secundária): surge nas sílabas/vogais (índices 11 a 14) criando vale intermédio
+    const centroPico2 = 0.68 + cos(tempo * 1.6) * 0.03;
+    const pico2 = exp(-pow((posNorm - centroPico2) / 0.11, 2)) * medioSuave * 0.88;
+
+    // Crista 3 (Acento agudo): surge nas consoantes/ênfase (índices 15 a 17, antes da ponta de 5px)
+    const centroPico3 = 0.86;
+    const pico3 = exp(-pow((posNorm - centroPico3) / 0.075, 2)) * agudoSuave * 0.85;
+
+    // Combina as cristas respeitando o afilamento das pontas
+    const ondaCombinada = max(pico1, max(pico2, pico3));
+    const mascaraPontas = lerp(0.0, 1.0, pow(sin(posNorm * PI), 0.55));
+
+    return constrain(ondaCombinada * mascaraPontas, 0, 1);
+  });
+
+  // Aplica gradação espacial entre vizinhas para manter "semelhança de família"
+  const intensidadesGradadas = intensidadesBrutas.map((val, i, arr) => {
+    if (i === 0 || i === NUM_BOLINHAS - 1) return 0; // extremidades fixas em 5x5 px
+    const ant = arr[i - 1];
+    const prox = arr[i + 1];
+    return ant * 0.18 + val * 0.64 + prox * 0.18;
+  });
+
+  // Atualiza diâmetros finais (5px a 32px)
+  diametrosAtuais = diametrosAtuais.map((dAtual, i) => {
+    const dAlvo = lerp(DIAMETRO_MIN, DIAMETRO_MAX, intensidadesGradadas[i]);
+    return constrain(lerp(dAtual, dAlvo, 0.45), DIAMETRO_MIN, DIAMETRO_MAX);
+  });
+
+  // Posiciona em Auto Layout horizontal com 6px exatos entre bordas
+  const somaDiametros = diametrosAtuais.reduce((acc, d) => acc + d, 0);
+  const larguraTotalIdeal = somaDiametros + (NUM_BOLINHAS - 1) * ESPACO_BOLINHAS;
+
+  const escalaX = larguraTotalIdeal > LARGURA_MAX_UTIL ? LARGURA_MAX_UTIL / larguraTotalIdeal : 1;
+  const gapEfetivo = ESPACO_BOLINHAS * escalaX;
+  const larguraFinal = larguraTotalIdeal * escalaX;
+
+  let cursorX = (width - larguraFinal) / 2;
   const centroY = height / 2;
 
   noStroke();
   fill(COR_RUC);
 
-  for (let i = 0; i < numBolinhasAtuais; i++) {
-    const alvo = constrain(niveisBolinha[i] || 0, 0, 1);
-    const diametro = DIAMETRO_MIN + alvo * (diametroMaximoVisivel - DIAMETRO_MIN);
-    const centroX = passo * (i + 0.5);
-    circle(centroX, centroY, diametro);
+  for (let i = 0; i < NUM_BOLINHAS; i++) {
+    const dDesenho = diametrosAtuais[i] * escalaX;
+    const centroX = cursorX + dDesenho / 2;
+    circle(centroX, centroY, dDesenho);
+    cursorX += dDesenho + gapEfetivo;
   }
 }
 
-// Liga os controlos depois de o p5 criar o canvas. A ausência desta função
-// fazia o setup() falhar antes de o botão de importação receber o seu evento.
+function lerEnergiaBanda(freqMin, freqMax, sensibilidade) {
+  if (!dadosFrequencia || !audioCtx || !analyserNode) return 0;
+
+  const nyquist = audioCtx.sampleRate / 2;
+  const binInicio = Math.max(1, Math.floor((freqMin / nyquist) * dadosFrequencia.length));
+  const binFim = Math.min(dadosFrequencia.length - 1, Math.ceil((freqMax / nyquist) * dadosFrequencia.length));
+
+  let somaPotencia = 0;
+  let contagem = 0;
+
+  for (let bin = binInicio; bin <= binFim; bin++) {
+    const db = dadosFrequencia[bin];
+    if (Number.isFinite(db)) {
+      const amp = Math.pow(10, db / 20);
+      somaPotencia += amp * amp;
+      contagem++;
+    }
+  }
+
+  if (contagem === 0) return 0;
+  const rmsBanda = Math.sqrt(somaPotencia / contagem);
+  const dbBanda = 20 * Math.log10(Math.max(rmsBanda, 0.000001));
+  const norm = constrain((dbBanda + 58) / 36, 0, 1);
+  return constrain(pow(norm, 0.85) * sensibilidade, 0, 1);
+}
+
 function ligarInterface() {
   elDropZone = select('#drop-zone');
   elInputAudio = select('#input-audio');
@@ -167,14 +185,21 @@ function ligarInterface() {
     return;
   }
 
-  elBtnImport.mousePressed(() => elInputAudio.elt.click());
+  elBtnImport.mousePressed(() => {
+    elInputAudio.elt.value = '';
+    elInputAudio.elt.click();
+  });
   elInputAudio.changed(lidarComInputAudio);
 
   if (elBtnPlay) {
     elBtnPlay.mousePressed(alternarReproducao);
     elBtnPlay.elt.disabled = true;
   }
-  if (elBtnExport) elBtnExport.elt.disabled = true;
+
+  if (elBtnExport) {
+    elBtnExport.mousePressed(iniciarExportacao);
+    elBtnExport.elt.disabled = true;
+  }
 
   if (elDropZone) {
     elDropZone.elt.addEventListener('dragover', (event) => {
@@ -206,17 +231,19 @@ async function carregarFicheiroAudio(ficheiro) {
   if (sourceNode) {
     paragemManual = true;
     sourceNode.onended = null;
-    sourceNode.stop();
+    try { sourceNode.stop(); } catch (e) {}
     sourceNode = null;
   }
   estaTocando = false;
   offsetPausa = 0;
+
   if (elBtnPlay) elBtnPlay.html('Tocar / Pausa');
+  if (elBtnExport) elBtnExport.elt.disabled = true;
   atualizarEstado(`A carregar ${ficheiro.name}…`);
 
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) throw new Error('Este navegador não suporta áudio Web Audio.');
+    if (!AudioContextClass) throw new Error('Este navegador não suporta Web Audio.');
     if (!audioCtx) audioCtx = new AudioContextClass();
 
     const bytes = await ficheiro.arrayBuffer();
@@ -224,22 +251,30 @@ async function carregarFicheiroAudio(ficheiro) {
 
     analyserNode = audioCtx.createAnalyser();
     analyserNode.fftSize = 2048;
+    analyserNode.connect(audioCtx.destination);
     dadosTempo = new Uint8Array(analyserNode.fftSize);
     dadosFrequencia = new Float32Array(analyserNode.frequencyBinCount);
 
-    nomeFicheiroBase = ficheiro.name.replace(/\.[^.]+$/, '') || 'waveform-ruc';
+    nomeFicheiroBase = ficheiro.name
+      .replace(/\.[^.]+$/, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, '-') || 'waveform-ruc';
+
     if (elBtnPlay) elBtnPlay.elt.disabled = false;
-    atualizarEstado(`Áudio carregado: ${ficheiro.name}. Carrega em “Tocar / Pausa” para pré-visualizar a waveform.`);
+    if (elBtnExport) elBtnExport.elt.disabled = false;
+
+    atualizarEstado(`Pronto: ${ficheiro.name} (${audioBuffer.duration.toFixed(1)}s).`);
   } catch (erro) {
     audioBuffer = null;
     if (elBtnPlay) elBtnPlay.elt.disabled = true;
+    if (elBtnExport) elBtnExport.elt.disabled = true;
     atualizarEstado(`Não foi possível importar o áudio: ${erro.message || erro}`);
     console.error('Erro ao importar áudio:', erro);
   }
 }
 
 async function alternarReproducao() {
-  if (!audioBuffer || !audioCtx) return;
+  if (!audioBuffer || !audioCtx || gravando) return;
 
   try {
     await audioCtx.resume();
@@ -249,35 +284,142 @@ async function alternarReproducao() {
       sourceNode = null;
       estaTocando = false;
       paragemManual = true;
-      if (fonte) fonte.stop();
+      if (fonte) {
+        try { fonte.stop(); } catch (e) {}
+      }
       if (elBtnPlay) elBtnPlay.html('Tocar / Pausa');
       atualizarEstado('Reprodução em pausa.');
       return;
     }
 
     if (offsetPausa >= audioBuffer.duration) offsetPausa = 0;
-    const fonte = audioCtx.createBufferSource();
-    fonte.buffer = audioBuffer;
-    fonte.connect(analyserNode);
-    analyserNode.connect(audioCtx.destination);
-    sourceNode = fonte;
-    estaTocando = true;
-    paragemManual = false;
-    tempoInicioCtx = audioCtx.currentTime;
-    fonte.onended = () => {
-      if (sourceNode !== fonte) return;
-      sourceNode = null;
-      estaTocando = false;
-      offsetPausa = 0;
-      if (elBtnPlay) elBtnPlay.html('Tocar / Pausa');
-      atualizarEstado('Reprodução terminada. Carrega em “Tocar / Pausa” para ouvir novamente.');
-    };
-    fonte.start(0, offsetPausa);
+    iniciarFonteAudio(offsetPausa, false);
+
     if (elBtnPlay) elBtnPlay.html('Pausa');
     atualizarEstado('A reproduzir áudio.');
   } catch (erro) {
     atualizarEstado(`Não foi possível reproduzir o áudio: ${erro.message || erro}`);
     console.error('Erro na reprodução:', erro);
+  }
+}
+
+function iniciarFonteAudio(inicioSegundos, paraGravacao) {
+  const fonte = audioCtx.createBufferSource();
+  fonte.buffer = audioBuffer;
+  fonte.connect(analyserNode);
+
+  if (paraGravacao && streamDest) {
+    fonte.connect(streamDest);
+  }
+
+  sourceNode = fonte;
+  estaTocando = true;
+  paragemManual = false;
+  tempoInicioCtx = audioCtx.currentTime;
+
+  fonte.onended = () => {
+    if (sourceNode !== fonte) return;
+    sourceNode = null;
+    estaTocando = false;
+    offsetPausa = 0;
+    if (elBtnPlay) elBtnPlay.html('Tocar / Pausa');
+
+    if (gravando) {
+      finalizarExportacao();
+    } else {
+      atualizarEstado('Reprodução terminada.');
+    }
+  };
+
+  fonte.start(0, inicioSegundos);
+}
+
+async function iniciarExportacao() {
+  if (!audioBuffer || !audioCtx || gravando) return;
+
+  try {
+    await audioCtx.resume();
+
+    if (sourceNode) {
+      paragemManual = true;
+      sourceNode.onended = null;
+      try { sourceNode.stop(); } catch (e) {}
+      sourceNode = null;
+    }
+
+    if (ultimoUrlExportado) {
+      URL.revokeObjectURL(ultimoUrlExportado);
+      ultimoUrlExportado = null;
+    }
+
+    offsetPausa = 0;
+    gravando = true;
+    chunksGravacao = [];
+
+    if (elBtnImport) elBtnImport.elt.disabled = true;
+    if (elBtnPlay) elBtnPlay.elt.disabled = true;
+    if (elBtnExport) elBtnExport.elt.disabled = true;
+
+    atualizarEstado('A gravar waveform (420×84 transparente)… Aguarda o fim do áudio.');
+
+    const canvasEl = document.querySelector('#canvas-wrapper canvas');
+    const canvasStream = canvasEl.captureStream(60);
+    streamDest = audioCtx.createMediaStreamDestination();
+
+    const streamFinal = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...streamDest.stream.getAudioTracks()
+    ]);
+
+    let opcoes = { mimeType: 'video/webm;codecs=vp9,opus' };
+    if (!MediaRecorder.isTypeSupported(opcoes.mimeType)) {
+      opcoes = { mimeType: 'video/webm' };
+    }
+
+    mediaRecorder = new MediaRecorder(streamFinal, opcoes);
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksGravacao.push(e.data);
+    };
+
+    mediaRecorder.onstop = () => {
+      const nomeSaida = `${nomeFicheiroBase}-waveform.webm`;
+      const blob = new Blob(chunksGravacao, { type: 'video/webm' });
+      ultimoUrlExportado = URL.createObjectURL(blob);
+
+      const linkAuto = document.createElement('a');
+      linkAuto.href = ultimoUrlExportado;
+      linkAuto.download = nomeSaida;
+      linkAuto.click();
+
+      if (elStatus) {
+        elStatus.elt.innerHTML = `Concluído! Ficheiro transferido: <a href="${ultimoUrlExportado}" download="${nomeSaida}">${nomeSaida}</a>`;
+      }
+
+      gravando = false;
+      streamDest = null;
+      if (elBtnImport) elBtnImport.elt.disabled = false;
+      if (elBtnPlay) elBtnPlay.elt.disabled = false;
+      if (elBtnExport) elBtnExport.elt.disabled = false;
+    };
+
+    mediaRecorder.start();
+    iniciarFonteAudio(0, true);
+  } catch (erro) {
+    gravando = false;
+    if (elBtnImport) elBtnImport.elt.disabled = false;
+    if (elBtnPlay) elBtnPlay.elt.disabled = false;
+    if (elBtnExport) elBtnExport.elt.disabled = false;
+    atualizarEstado(`Erro ao exportar: ${erro.message || erro}`);
+    console.error('Erro na exportação:', erro);
+  }
+}
+
+function finalizarExportacao() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    setTimeout(() => {
+      mediaRecorder.stop();
+    }, 450);
   }
 }
 
