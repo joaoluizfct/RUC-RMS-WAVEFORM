@@ -88,7 +88,7 @@ function draw() {
   }
 
   // 2. Leitura RMS da voz e atualização do tempo
-  const sensibilidade = elSlider ? parseFloat(elSlider.value) : 1.3;
+  const sensibilidade = elSlider ? parseFloat(elSlider.value()) : 1.3;
   let rmsInst = 0;
   let progressoAudio = 0;
   let tempoAtual = offsetPausa;
@@ -154,13 +154,11 @@ function draw() {
 function desenharGuiaSemImagem(cfg) {
   background('#141414');
 
-  // Grelha subtil de referência
   stroke(255, 255, 255, 14);
   strokeWeight(1);
   line(60, 0, 60, height);
   line(width - 60, 0, width - 60, height);
 
-  // Caixa exata da waveform (X: 60, Y: 1226 ou 1633)
   noFill();
   stroke(255, 255, 255, 65);
   strokeWeight(2);
@@ -169,16 +167,16 @@ function desenharGuiaSemImagem(cfg) {
   noStroke();
   fill('#F7F6ED');
   textAlign(CENTER, CENTER);
-  textFont('Archivo Narrow, Inter, sans-serif');
-  textSize(34);
+  textFont('Oswald, sans-serif');
+  textSize(38);
   text(
     formatoAtual === 'story' ? 'STORY 9:16 (1080 × 1920)' : 'POST FEED 4:5 (1080 × 1350)',
     width / 2,
     height / 2 - 22
   );
 
-  textFont('Inter, sans-serif');
-  textSize(20);
+  textFont('Syne, sans-serif');
+  textSize(19);
   fill('#9A9A95');
   text('Importa o PNG exportado do Figma para preencher o fundo', width / 2, height / 2 + 24);
 }
@@ -251,7 +249,6 @@ function ligarInterface() {
   elPlayerTime = document.getElementById('player-time');
   elCodecInfo = document.getElementById('codec-info');
 
-  // Importação
   elBtnImportImg.addEventListener('click', () => {
     if (gravando) return;
     elInputImg.value = '';
@@ -270,11 +267,9 @@ function ligarInterface() {
     if (elInputAudio.files[0]) carregarFicheiroAudio(elInputAudio.files[0]);
   });
 
-  // Seletor de Formato (Post 4:5 vs Story 9:16)
   elBtnFmtPost.addEventListener('click', () => alterarFormato('post'));
   elBtnFmtStory.addEventListener('click', () => alterarFormato('story'));
 
-  // Seletor de Cor (#C53030 vs #F7F6ED)
   elBtnCorVermelho.addEventListener('click', () => {
     corAtual = CORES_RUC.vermelho;
     elBtnCorVermelho.classList.add('active');
@@ -287,7 +282,6 @@ function ligarInterface() {
     elBtnCorVermelho.classList.remove('active');
   });
 
-  // Seletor de Extensão (.mp4 vs .mov em H.264)
   elBtnExtMp4.addEventListener('click', () => {
     extensaoEscolhida = 'mp4';
     elBtnExtMp4.classList.add('active');
@@ -300,16 +294,13 @@ function ligarInterface() {
     elBtnExtMp4.classList.remove('active');
   });
 
-  // Slider
   elSlider.addEventListener('input', () => {
     elSliderVal.textContent = `${parseFloat(elSlider.value).toFixed(2)}×`;
   });
 
-  // Reprodução e Exportação
   elBtnPlay.addEventListener('click', alternarReproducao);
   elBtnExport.addEventListener('click', iniciarExportacao);
 
-  // Drag & Drop global
   elDropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     elDropZone.classList.add('drag-over');
@@ -338,7 +329,6 @@ function ligarInterface() {
     });
   });
 
-  // Indica o suporte H.264 detetado no navegador atual
   const fmtDetetado = escolherFormatoVideo();
   if (fmtDetetado.suportaH264) {
     elCodecInfo.textContent = 'Codec H.264 + AAC ativo (compatível com iPhone/iOS, QuickTime e PC).';
@@ -377,7 +367,6 @@ function carregarFicheiroImagem(ficheiro) {
       ultimoUrlImagem = urlTemp;
       imagemFundo = img;
 
-      // Ajusta automaticamente para Story se a imagem importada tiver proporção 9:16
       if (img.height > img.width * 1.5 && formatoAtual !== 'story') {
         alterarFormato('story');
       } else if (img.height <= img.width * 1.5 && formatoAtual !== 'post') {
@@ -517,7 +506,6 @@ function iniciarFonteAudio(inicioSegundos, paraGravacao) {
   fonte.start(0, inicioSegundos);
 }
 
-// Prioriza H.264 Constrained Baseline (avc1.42E01E) + AAC para compatibilidade total com iOS/iPhone e PC
 function escolherFormatoVideo() {
   const candidatosH264 = [
     'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
