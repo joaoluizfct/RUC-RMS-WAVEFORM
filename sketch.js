@@ -17,8 +17,9 @@ const LARGURA_FRAME = 420;
 const ALTURA_FRAME = 84;
 const NUM_BOLINHAS = 19;
 const COR_RUC = '#E31E24';
-const ESPACO_BOLINHAS = 6;
-const DIAMETRO_MAX = 14;
+const ESPACO_BOLINHAS = 6; // espaço livre entre as bordas das bolinhas
+const DIAMETRO_MIN = 3;
+const DIAMETRO_MAX = 24;
 
 // Mapa estático dos 19 valores RMS extraídos do áudio completo.
 let mapaRMSEstatico = [];
@@ -72,38 +73,41 @@ function draw() {
   const fatorSuavizacao = rmsInstantaneo > nivelVivo ? 0.55 : 0.18;
   nivelVivo = lerp(nivelVivo, rmsInstantaneo, fatorSuavizacao);
 
-  // Os centros ficam afastados pelo diâmetro máximo + 6 px de espaço livre.
-  const passo = DIAMETRO_MAX + ESPACO_BOLINHAS;
-  const larguraLinha = (NUM_BOLINHAS - 1) * passo;
-  const inicioX = (width - larguraLinha) / 2;
+  const diametros = [];
+
+  for (let i = 0; i < NUM_BOLINHAS; i++) {
+    // Perfil em arco: as bolinhas crescem das extremidades até ao centro,
+    // como na referência, e voltam a diminuir simetricamente.
+    const posicao = i / (NUM_BOLINHAS - 1);
+    const arco = pow(sin(posicao * PI), 0.9);
+    const rmsBase = mapaRMSEstatico[i] || 0;
+    let fatorAudio = audioBuffer ? 0.35 + rmsBase * 0.65 : 0.55;
+
+    if (estaTocando) {
+      const distancia = abs(posicao - progressoAudio);
+      const foco = exp(-pow(distancia / 0.12, 2));
+      fatorAudio = constrain(
+        0.35 + rmsBase * 0.45 + foco * nivelVivo * 0.55,
+        0.2,
+        1
+      );
+    }
+
+    diametros.push(DIAMETRO_MIN + arco * (DIAMETRO_MAX - DIAMETRO_MIN) * fatorAudio);
+  }
+
+  // O espaçamento de 6 px é medido entre as bordas, não entre os centros.
+  const larguraLinha = diametros.reduce((soma, d) => soma + d, 0)
+    + ESPACO_BOLINHAS * (NUM_BOLINHAS - 1);
+  let x = (width - larguraLinha) / 2;
   const centroY = height / 2;
 
   noStroke();
   fill(COR_RUC);
 
-  for (let i = 0; i < NUM_BOLINHAS; i++) {
-    const rmsBase = mapaRMSEstatico[i] || 0;
-    let intensidade = rmsBase;
-
-    if (!audioBuffer) {
-      intensidade = 0.12;
-    } else if (estaTocando) {
-      const progressoBolinhas = i / (NUM_BOLINHAS - 1);
-      const distancia = abs(progressoBolinhas - progressoAudio);
-      const foco = exp(-pow(distancia / 0.12, 2));
-
-      // O ponto correspondente à reprodução também reage ao RMS ao vivo.
-      intensidade = constrain(
-        rmsBase * 0.45 + rmsBase * nivelVivo * 0.25 + foco * nivelVivo * 0.65,
-        0,
-        1
-      );
-    }
-
-    // O diâmetro aumenta de acordo com a intensidade RMS de cada segmento.
-    const diametro = 2 + intensidade * (DIAMETRO_MAX - 2);
-    const x = inicioX + i * passo;
-    circle(x, centroY, diametro);
+  for (const diametro of diametros) {
+    circle(x + diametro / 2, centroY, diametro);
+    x += diametro + ESPACO_BOLINHAS;
   }
 }
 
