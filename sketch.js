@@ -5,24 +5,32 @@ let analyserNode = null;
 let dadosTempo = null;
 let streamDest = null;
 let ultimoUrlExportado = null;
-let nomeFicheiroBase = 'waveform-ruc';
+let ultimoUrlImagem = null;
+let nomeFicheiroBase = 'post-ruc';
+
+let imagemFundo = null;
 
 let estaTocando = false;
 let tempoInicioCtx = 0;
 let offsetPausa = 0;
 let paragemManual = false;
 
-// Especificações fixas: 420 × 84 px, 19 bolinhas ancoradas, 5×5 a 32×32 px
-const LARGURA_FRAME = 420;
-const ALTURA_FRAME = 84;
+// Dimensões do Post 4x5 e coordenadas exatas do Figma (X: 60, Y: 1226, W: 420, H: 84)
+const LARGURA_POST = 1080;
+const ALTURA_POST = 1350;
+const WAVE_X = 60;
+const WAVE_Y = 1226;
+const WAVE_W = 420;
+const WAVE_H = 84;
+
 const NUM_BOLINHAS = 19;
 const DIAMETRO_MIN = 5;
 const DIAMETRO_MAX = 32;
 const COR_RUC = '#E31E24';
 
-// Margem lateral igual ao raio máximo (16px) para nunca cortar nas bordas da caixa
+// Linha fixa: os centros das 19 bolinhas nunca mudam de X, apenas o raio cresce
 const MARGEM_X = DIAMETRO_MAX / 2;
-const LARGURA_LINHA_FIXA = LARGURA_FRAME - MARGEM_X * 2;
+const LARGURA_LINHA_FIXA = WAVE_W - MARGEM_X * 2;
 const PASSO_FIXO = LARGURA_LINHA_FIXA / (NUM_BOLINHAS - 1);
 
 let mapaRMSEstatico = Array.from({ length: NUM_BOLINHAS }, () => 0);
@@ -33,18 +41,25 @@ let gravando = false;
 let mediaRecorder = null;
 let chunksGravacao = [];
 
-let elDropZone, elInputAudio, elBtnImport, elBtnPlay, elBtnExport, elSlider, elStatus;
+let elDropZone, elInputImg, elInputAudio, elBtnImportImg, elBtnImportAudio, elBtnPlay, elBtnExport, elSlider, elStatus;
 
 function setup() {
-  let cnv = createCanvas(LARGURA_FRAME, ALTURA_FRAME);
+  let cnv = createCanvas(LARGURA_POST, ALTURA_POST);
   cnv.parent('canvas-wrapper');
   pixelDensity(1);
   ligarInterface();
 }
 
 function draw() {
-  clear();
+  // 1. Camada de fundo (PNG exportado do Figma ou guia visual enquanto não é carregado)
+  if (imagemFundo) {
+    background(0);
+    image(imagemFundo, 0, 0, width, height);
+  } else {
+    desenharGuiaSemImagem();
+  }
 
+  // 2. Cálculo da energia RMS da voz
   const sensibilidade = elSlider ? parseFloat(elSlider.value()) : 1.3;
   let rmsInst = 0;
   let progressoAudio = 0;
@@ -53,7 +68,6 @@ function draw() {
     const tempoDecorrido = offsetPausa + (audioCtx.currentTime - tempoInicioCtx);
     progressoAudio = constrain(tempoDecorrido / audioBuffer.duration, 0, 1);
 
-    // Leitura da energia RMS instantânea da voz
     analyserNode.getByteTimeDomainData(dadosTempo);
     let somaQuadrados = 0;
     for (const amostra of dadosTempo) {
@@ -65,11 +79,11 @@ function draw() {
     rmsInst = constrain(pow(rmsBruto * 3.5 * sensibilidade, 0.85), 0, 1);
   }
 
-  // Ataque rápido nas sílabas e decaimento fluido nas pausas de fala
   const fatorSuavizacao = rmsInst > rmsSuave ? 0.55 : 0.22;
   rmsSuave = lerp(rmsSuave, rmsInst, fatorSuavizacao);
 
-  const centroY = height / 2;
+  // 3. Desenho das 19 bolinhas ancoradas na posição X:60, Y:1226
+  const centroY = WAVE_Y + WAVE_H / 2;
   noStroke();
   fill(COR_RUC);
 
@@ -79,17 +93,12 @@ function draw() {
     let intensidadeAlvo = 0;
 
     if (!audioBuffer) {
-      // Estado inicial sem áudio: leve gradação em repouso
-      intensidadeAlvo = pow(sin(posNorm * PI), 1.4) * 0.12;
+      intensidadeAlvo = pow(sin(posNorm * PI), 1.4) * 0.14;
     } else if (!estaTocando) {
-      // Áudio carregado em pausa: mostra a silhueta RMS estática
       intensidadeAlvo = baseRMS * 0.45;
     } else {
-      // Durante a reprodução: o RMS vivo dilata as bolinhas no seu eixo fixo
       const distCursor = abs(posNorm - progressoAudio);
       const realceCursor = exp(-pow(distCursor / 0.14, 2));
-
-      // Onda orgânica secundária acoplada ao RMS para dar vida à locução
       const pulsoOrganico = 0.75 + 0.25 * sin(millis() * 0.012 + i * 0.85);
 
       intensidadeAlvo =
@@ -106,13 +115,31 @@ function draw() {
       DIAMETRO_MAX
     );
 
-    // Posição X estritamente fixa: a largura da linha nunca muda, apenas o raio cresce
-    const centroX = MARGEM_X + i * PASSO_FIXO;
+    const centroX = WAVE_X + MARGEM_X + i * PASSO_FIXO;
     circle(centroX, centroY, diametrosAtuais[i]);
   }
 }
 
-// Extrai os 19 valores RMS do ficheiro completo com gradação espacial entre vizinhas
+function desenharGuiaSemImagem() {
+  background('#18181b');
+
+  // Marcação subtil da área da waveform (X:60, Y:1226, 420x84)
+  noFill();
+  stroke(255, 255, 255, 45);
+  strokeWeight(2);
+  rect(WAVE_X, WAVE_Y, WAVE_W, WAVE_H, 8);
+
+  noStroke();
+  fill(255, 255, 255, 160);
+  textAlign(CENTER, CENTER);
+  textFont('Inter, sans-serif');
+  textSize(28);
+  text('Pré-visualização do Post (1080 × 1350)', width / 2, height / 2 - 20);
+  textSize(20);
+  fill(255, 255, 255, 100);
+  text('Importa o PNG do Figma para preencher o fundo', width / 2, height / 2 + 22);
+}
+
 function extrairMapaRMSEstatico(buffer) {
   const numCanais = buffer.numberOfChannels;
   const totalAmostras = buffer.length;
@@ -144,7 +171,6 @@ function extrairMapaRMSEstatico(buffer) {
   const picoMax = Math.max(...rmsBrutos, 0.0001);
   const normalizados = rmsBrutos.map((v) => Math.pow(v / picoMax, 0.8));
 
-  // Gradação espacial suave (Wucius Wong) para formar agrupamentos orgânicos
   const gradados = normalizados.map((val, i, arr) => {
     const ant = i > 0 ? arr[i - 1] : val;
     const prox = i < arr.length - 1 ? arr[i + 1] : val;
@@ -157,61 +183,98 @@ function extrairMapaRMSEstatico(buffer) {
 
 function ligarInterface() {
   elDropZone = select('#drop-zone');
+  elInputImg = select('#input-imagem');
   elInputAudio = select('#input-audio');
-  elBtnImport = select('#btn-import');
+  elBtnImportImg = select('#btn-import-img');
+  elBtnImportAudio = select('#btn-import-audio');
   elBtnPlay = select('#btn-play');
   elBtnExport = select('#btn-export');
   elSlider = select('#slider-sensibilidade');
   elStatus = select('#status-texto');
 
-  if (!elInputAudio || !elBtnImport || !elSlider || !elStatus) {
-    console.error('Não foi possível inicializar os controlos de áudio.');
-    return;
-  }
+  elBtnImportImg.mousePressed(() => {
+    elInputImg.elt.value = '';
+    elInputImg.elt.click();
+  });
+  elInputImg.changed(() => {
+    const ficheiro = elInputImg.elt.files[0];
+    if (ficheiro) carregarFicheiroImagem(ficheiro);
+  });
 
-  elBtnImport.mousePressed(() => {
+  elBtnImportAudio.mousePressed(() => {
     elInputAudio.elt.value = '';
     elInputAudio.elt.click();
   });
-  elInputAudio.changed(lidarComInputAudio);
+  elInputAudio.changed(() => {
+    const ficheiro = elInputAudio.elt.files[0];
+    if (ficheiro) carregarFicheiroAudio(ficheiro);
+  });
 
-  if (elBtnPlay) {
-    elBtnPlay.mousePressed(alternarReproducao);
-    elBtnPlay.elt.disabled = true;
-  }
+  elBtnPlay.mousePressed(alternarReproducao);
+  elBtnExport.mousePressed(iniciarExportacao);
 
-  if (elBtnExport) {
-    elBtnExport.mousePressed(iniciarExportacao);
-    elBtnExport.elt.disabled = true;
-  }
+  // Suporte para arrastar PNG e Áudio ao mesmo tempo ou em separado
+  elDropZone.elt.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    elDropZone.elt.classList.add('drag-over');
+  });
 
-  if (elDropZone) {
-    elDropZone.elt.addEventListener('dragover', (event) => {
-      event.preventDefault();
-      elDropZone.elt.classList.add('drag-over');
-    });
-    elDropZone.elt.addEventListener('dragleave', (event) => {
-      if (!elDropZone.elt.contains(event.relatedTarget)) {
-        elDropZone.elt.classList.remove('drag-over');
+  elDropZone.elt.addEventListener('dragleave', (event) => {
+    if (!elDropZone.elt.contains(event.relatedTarget)) {
+      elDropZone.elt.classList.remove('drag-over');
+    }
+  });
+
+  elDropZone.elt.addEventListener('drop', (event) => {
+    event.preventDefault();
+    elDropZone.elt.classList.remove('drag-over');
+    if (!event.dataTransfer || !event.dataTransfer.files) return;
+
+    Array.from(event.dataTransfer.files).forEach((ficheiro) => {
+      if (ficheiro.type.startsWith('image/')) {
+        carregarFicheiroImagem(ficheiro);
+      } else if (
+        ficheiro.type.startsWith('audio/') ||
+        /\.(mp3|wav|ogg|m4a|aac|flac|opus|webm)$/i.test(ficheiro.name)
+      ) {
+        carregarFicheiroAudio(ficheiro);
       }
     });
-    elDropZone.elt.addEventListener('drop', (event) => {
-      event.preventDefault();
-      elDropZone.elt.classList.remove('drag-over');
-      const ficheiro = event.dataTransfer && event.dataTransfer.files[0];
-      if (ficheiro) carregarFicheiroAudio(ficheiro);
-    });
-  }
+  });
 }
 
-function lidarComInputAudio() {
-  const ficheiro = elInputAudio && elInputAudio.elt.files[0];
-  if (ficheiro) carregarFicheiroAudio(ficheiro);
+function carregarFicheiroImagem(ficheiro) {
+  const urlTemp = URL.createObjectURL(ficheiro);
+  atualizarEstado(`A carregar imagem ${ficheiro.name}…`);
+
+  loadImage(
+    urlTemp,
+    (img) => {
+      if (ultimoUrlImagem) URL.revokeObjectURL(ultimoUrlImagem);
+      ultimoUrlImagem = urlTemp;
+      imagemFundo = img;
+
+      if (!audioBuffer) {
+        nomeFicheiroBase = ficheiro.name
+          .replace(/\.[^.]+$/, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9-_]+/g, '-') || 'post-ruc';
+      }
+
+      atualizarEstado(
+        audioBuffer
+          ? `Pronto para exportar! Imagem e áudio carregados.`
+          : `Imagem carregada (${img.width}×${img.height}px). Agora importa o áudio.`
+      );
+    },
+    () => {
+      URL.revokeObjectURL(urlTemp);
+      atualizarEstado('Não foi possível ler a imagem. Usa um ficheiro PNG ou JPG válido.');
+    }
+  );
 }
 
 async function carregarFicheiroAudio(ficheiro) {
-  if (!ficheiro) return;
-
   if (sourceNode) {
     paragemManual = true;
     sourceNode.onended = null;
@@ -222,8 +285,8 @@ async function carregarFicheiroAudio(ficheiro) {
   offsetPausa = 0;
   rmsSuave = 0;
 
-  if (elBtnPlay) elBtnPlay.html('Tocar / Pausa');
-  if (elBtnExport) elBtnExport.elt.disabled = true;
+  elBtnPlay.html('Tocar / Pausa');
+  elBtnExport.elt.disabled = true;
   atualizarEstado(`A analisar RMS de ${ficheiro.name}…`);
 
   try {
@@ -244,18 +307,22 @@ async function carregarFicheiroAudio(ficheiro) {
     nomeFicheiroBase = ficheiro.name
       .replace(/\.[^.]+$/, '')
       .toLowerCase()
-      .replace(/[^a-z0-9-_]+/g, '-') || 'waveform-ruc';
+      .replace(/[^a-z0-9-_]+/g, '-') || 'post-ruc';
 
-    if (elBtnPlay) elBtnPlay.elt.disabled = false;
-    if (elBtnExport) elBtnExport.elt.disabled = false;
+    elBtnPlay.elt.disabled = false;
+    elBtnExport.elt.disabled = false;
 
-    atualizarEstado(`Pronto: ${ficheiro.name} (${audioBuffer.duration.toFixed(1)}s).`);
+    atualizarEstado(
+      imagemFundo
+        ? `Pronto para exportar! Áudio: ${ficheiro.name} (${audioBuffer.duration.toFixed(1)}s).`
+        : `Áudio carregado (${audioBuffer.duration.toFixed(1)}s). Importa também o PNG do post.`
+    );
   } catch (erro) {
     audioBuffer = null;
-    if (elBtnPlay) elBtnPlay.elt.disabled = true;
-    if (elBtnExport) elBtnExport.elt.disabled = true;
-    atualizarEstado(`Não foi possível importar o áudio: ${erro.message || erro}`);
-    console.error('Erro ao importar áudio:', erro);
+    elBtnPlay.elt.disabled = true;
+    elBtnExport.elt.disabled = true;
+    atualizarEstado(`Erro ao importar áudio: ${erro.message || erro}`);
+    console.error(erro);
   }
 }
 
@@ -273,7 +340,7 @@ async function alternarReproducao() {
       if (fonte) {
         try { fonte.stop(); } catch (e) {}
       }
-      if (elBtnPlay) elBtnPlay.html('Tocar / Pausa');
+      elBtnPlay.html('Tocar / Pausa');
       atualizarEstado('Reprodução em pausa.');
       return;
     }
@@ -281,11 +348,10 @@ async function alternarReproducao() {
     if (offsetPausa >= audioBuffer.duration) offsetPausa = 0;
     iniciarFonteAudio(offsetPausa, false);
 
-    if (elBtnPlay) elBtnPlay.html('Pausa');
-    atualizarEstado('A reproduzir áudio.');
+    elBtnPlay.html('Pausa');
+    atualizarEstado('A reproduzir pré-visualização.');
   } catch (erro) {
-    atualizarEstado(`Não foi possível reproduzir o áudio: ${erro.message || erro}`);
-    console.error('Erro na reprodução:', erro);
+    atualizarEstado(`Erro na reprodução: ${erro.message || erro}`);
   }
 }
 
@@ -308,7 +374,7 @@ function iniciarFonteAudio(inicioSegundos, paraGravacao) {
     sourceNode = null;
     estaTocando = false;
     offsetPausa = 0;
-    if (elBtnPlay) elBtnPlay.html('Tocar / Pausa');
+    elBtnPlay.html('Tocar / Pausa');
 
     if (gravando) {
       finalizarExportacao();
@@ -318,6 +384,23 @@ function iniciarFonteAudio(inicioSegundos, paraGravacao) {
   };
 
   fonte.start(0, inicioSegundos);
+}
+
+function escolherFormatoVideo() {
+  const candidatos = [
+    { mime: 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', ext: 'mp4' },
+    { mime: 'video/mp4;codecs=avc1,mp4a.40.2', ext: 'mp4' },
+    { mime: 'video/mp4', ext: 'mp4' },
+    { mime: 'video/webm;codecs=vp9,opus', ext: 'webm' },
+    { mime: 'video/webm', ext: 'webm' }
+  ];
+
+  for (const item of candidatos) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(item.mime)) {
+      return item;
+    }
+  }
+  return { mime: '', ext: 'webm' };
 }
 
 async function iniciarExportacao() {
@@ -343,11 +426,13 @@ async function iniciarExportacao() {
     gravando = true;
     chunksGravacao = [];
 
-    if (elBtnImport) elBtnImport.elt.disabled = true;
-    if (elBtnPlay) elBtnPlay.elt.disabled = true;
-    if (elBtnExport) elBtnExport.elt.disabled = true;
+    elBtnImportImg.elt.disabled = true;
+    elBtnImportAudio.elt.disabled = true;
+    elBtnPlay.elt.disabled = true;
+    elBtnExport.elt.disabled = true;
 
-    atualizarEstado('A gravar waveform (420×84 transparente)… Aguarda o fim do áudio.');
+    const formato = escolherFormatoVideo();
+    atualizarEstado(`A gravar vídeo final (${formato.ext.toUpperCase()} 1080×1350)… Aguarda o fim do áudio.`);
 
     const canvasEl = document.querySelector('#canvas-wrapper canvas');
     const canvasStream = canvasEl.captureStream(60);
@@ -358,10 +443,8 @@ async function iniciarExportacao() {
       ...streamDest.stream.getAudioTracks()
     ]);
 
-    let opcoes = { mimeType: 'video/webm;codecs=vp9,opus' };
-    if (!MediaRecorder.isTypeSupported(opcoes.mimeType)) {
-      opcoes = { mimeType: 'video/webm' };
-    }
+    const opcoes = { videoBitsPerSecond: 8000000 };
+    if (formato.mime) opcoes.mimeType = formato.mime;
 
     mediaRecorder = new MediaRecorder(streamFinal, opcoes);
 
@@ -370,8 +453,9 @@ async function iniciarExportacao() {
     };
 
     mediaRecorder.onstop = () => {
-      const nomeSaida = `${nomeFicheiroBase}-waveform.webm`;
-      const blob = new Blob(chunksGravacao, { type: 'video/webm' });
+      const nomeSaida = `${nomeFicheiroBase}-post.${formato.ext}`;
+      const tipoBlob = formato.mime || `video/${formato.ext}`;
+      const blob = new Blob(chunksGravacao, { type: tipoBlob });
       ultimoUrlExportado = URL.createObjectURL(blob);
 
       const linkAuto = document.createElement('a');
@@ -379,26 +463,26 @@ async function iniciarExportacao() {
       linkAuto.download = nomeSaida;
       linkAuto.click();
 
-      if (elStatus) {
-        elStatus.elt.innerHTML = `Concluído! Ficheiro transferido: <a href="${ultimoUrlExportado}" download="${nomeSaida}">${nomeSaida}</a>`;
-      }
+      elStatus.elt.innerHTML = `Concluído! Ficheiro transferido: <a href="${ultimoUrlExportado}" download="${nomeSaida}">${nomeSaida}</a>`;
 
       gravando = false;
       streamDest = null;
-      if (elBtnImport) elBtnImport.elt.disabled = false;
-      if (elBtnPlay) elBtnPlay.elt.disabled = false;
-      if (elBtnExport) elBtnExport.elt.disabled = false;
+      elBtnImportImg.elt.disabled = false;
+      elBtnImportAudio.elt.disabled = false;
+      elBtnPlay.elt.disabled = false;
+      elBtnExport.elt.disabled = false;
     };
 
     mediaRecorder.start();
     iniciarFonteAudio(0, true);
   } catch (erro) {
     gravando = false;
-    if (elBtnImport) elBtnImport.elt.disabled = false;
-    if (elBtnPlay) elBtnPlay.elt.disabled = false;
-    if (elBtnExport) elBtnExport.elt.disabled = false;
+    elBtnImportImg.elt.disabled = false;
+    elBtnImportAudio.elt.disabled = false;
+    elBtnPlay.elt.disabled = false;
+    elBtnExport.elt.disabled = false;
     atualizarEstado(`Erro ao exportar: ${erro.message || erro}`);
-    console.error('Erro na exportação:', erro);
+    console.error(erro);
   }
 }
 
