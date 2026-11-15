@@ -196,10 +196,10 @@
 
     .control-block {
       border-bottom: 1px solid var(--ruc-border);
-      padding: 16px 18px;
+      padding: 15px 18px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 9px;
     }
 
     .control-block:last-child {
@@ -227,6 +227,11 @@
       border-right: 1px solid var(--ruc-border);
     }
 
+    .btn-full {
+      width: 100%;
+      border: 1px solid var(--ruc-border);
+    }
+
     button {
       font-family: var(--font-ui);
       font-size: 11px;
@@ -236,7 +241,7 @@
       color: var(--ruc-white);
       background: var(--ruc-bg);
       border: none;
-      padding: 12px 10px;
+      padding: 11px 10px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
@@ -320,7 +325,7 @@
     .btn-export-main {
       width: 100%;
       border: 1px solid var(--ruc-border);
-      padding: 14px 12px;
+      padding: 13px 12px;
       font-family: var(--font-display);
       font-size: 15px;
       font-weight: 700;
@@ -331,7 +336,7 @@
       font-family: var(--font-ui);
       font-size: 11px;
       color: var(--ruc-muted);
-      line-height: 1.45;
+      line-height: 1.4;
     }
 
     /* Barra inferior estilo player de ruc.pt */
@@ -427,9 +432,10 @@
         <div class="control-block">
           <span class="block-label">01 · Ficheiros (ou arrastar para a janela)</span>
           <div class="grid-2">
-            <button type="button" id="btn-import-img">Imagem (PNG)</button>
-            <button type="button" id="btn-import-audio">Áudio</button>
+            <button type="button" id="btn-import-img">Importar Imagem</button>
+            <button type="button" id="btn-remove-img" disabled>Remover Imagem</button>
           </div>
+          <button type="button" class="btn-full" id="btn-import-audio">Importar Áudio</button>
         </div>
 
         <!-- 02. Formato -->
@@ -492,6 +498,6 @@
     </footer>
   </div>
 
-  <script src="sketch.js"></script>
+  <script src="sketch.js?v=4"></script>
 </body>
 </html>
