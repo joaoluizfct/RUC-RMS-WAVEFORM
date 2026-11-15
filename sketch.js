@@ -48,7 +48,8 @@ function draw() {
   let rmsInstantaneo = 0;
   let progressoAudio = 0;
 
-  // RMS do áudio em tempo real.
+  // RMS em tempo real com ganho e limiar baixo para funcionar melhor
+  // também com ficheiros de áudio gravados em níveis diferentes.
   if (estaTocando && audioBuffer && analyserNode && dadosTempo) {
     const tempoDecorrido = audioCtx.currentTime - tempoInicioCtx;
     progressoAudio = constrain(tempoDecorrido / audioBuffer.duration, 0, 1);
@@ -62,33 +63,32 @@ function draw() {
     }
 
     const rmsBruto = sqrt(somaQuadrados / dadosTempo.length);
-    rmsInstantaneo = constrain(
-      pow(rmsBruto * 3.2 * sensibilidade, 0.85),
-      0,
-      1
-    );
+    const rmsComGanho = constrain((rmsBruto - 0.003) * 10 * sensibilidade, 0, 1);
+    rmsInstantaneo = pow(rmsComGanho, 0.72);
   }
 
-  // Ataque rápido e decaimento suave para uma resposta visual fluida.
-  const fatorSuavizacao = rmsInstantaneo > nivelVivo ? 0.55 : 0.18;
+  // Ataque mais rápido e queda controlada para as bolinhas variarem visivelmente.
+  const fatorSuavizacao = rmsInstantaneo > nivelVivo ? 0.72 : 0.12;
   nivelVivo = lerp(nivelVivo, rmsInstantaneo, fatorSuavizacao);
 
   const diametros = [];
 
   for (let i = 0; i < NUM_BOLINHAS; i++) {
-    // Perfil em arco: as bolinhas crescem das extremidades até ao centro,
-    // como na referência, e voltam a diminuir simetricamente.
+    // Perfil em arco: as bolinhas crescem das extremidades até ao centro.
     const posicao = i / (NUM_BOLINHAS - 1);
     const arco = pow(sin(posicao * PI), 0.9);
     const rmsBase = mapaRMSEstatico[i] || 0;
-    let fatorAudio = audioBuffer ? 0.35 + rmsBase * 0.65 : 0.55;
+    let fatorAudio = audioBuffer ? 0.12 + rmsBase * 0.72 : 0.55;
 
     if (estaTocando) {
       const distancia = abs(posicao - progressoAudio);
-      const foco = exp(-pow(distancia / 0.12, 2));
+      const foco = exp(-pow(distancia / 0.16, 2));
+
+      // O nível ao vivo afeta toda a linha; o foco reforça a zona atual
+      // de reprodução, aumentando a variação entre fala, pausas e picos.
       fatorAudio = constrain(
-        0.35 + rmsBase * 0.45 + foco * nivelVivo * 0.55,
-        0.2,
+        0.08 + rmsBase * 0.30 + nivelVivo * 0.48 + foco * nivelVivo * 0.72,
+        0.06,
         1
       );
     }
@@ -96,7 +96,7 @@ function draw() {
     diametros.push(DIAMETRO_MIN + arco * (DIAMETRO_MAX - DIAMETRO_MIN) * fatorAudio);
   }
 
-  // O espaçamento de 6 px é medido entre as bordas, não entre os centros.
+  // O espaçamento de 6 px é medido entre as bordas das bolinhas.
   const larguraLinha = diametros.reduce((soma, d) => soma + d, 0)
     + ESPACO_BOLINHAS * (NUM_BOLINHAS - 1);
   let x = (width - larguraLinha) / 2;
