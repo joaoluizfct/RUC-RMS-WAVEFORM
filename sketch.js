@@ -5,7 +5,6 @@ let analyserNode = null;
 let dadosTempo = null;
 let streamDest = null;
 let ultimoUrlExportado = null;
-let ultimoUrlImagem = null;
 let nomeFicheiroBase = 'post-ruc';
 
 let imagemFundo = null;
@@ -22,15 +21,13 @@ const FORMATOS = {
     largura: 1080,
     altura: 1350,
     waveX: 60,
-    waveY: 1226,
-    label: 'POST 4:5 · 1080 × 1350 PX · WAVEFORM (60, 1226)'
+    waveY: 1226
   },
   story: {
     largura: 1080,
     altura: 1920,
     waveX: 60,
-    waveY: 1633,
-    label: 'STORY 9:16 · 1080 × 1920 PX · WAVEFORM (60, 1633)'
+    waveY: 1633
   }
 };
 
@@ -63,42 +60,32 @@ let mediaRecorder = null;
 let chunksGravacao = [];
 
 // Referências DOM
-let elDropZone, elCanvasWrapper, elStageMeta;
-let elInputImg, elInputAudio, elBtnImportImg, elBtnRemoveImg, elBtnImportAudio;
+let elDropZone, elCanvasWrapper, elCanvasImportTrigger, elCanvasRemoveTrigger;
+let elInputImg, elInputAudio, elBtnImportImg, elBtnImportAudio;
 let elBtnFmtPost, elBtnFmtStory, elBtnCorVermelho, elBtnCorBranco;
 let elBtnExtMp4, elBtnExtMov, elBtnPlay, elBtnExport;
-let elSlider, elSliderVal, elStatus, elPlayerTime, elCodecInfo;
-
-document.addEventListener('DOMContentLoaded', () => {
-  ligarInterface();
-});
+let elSlider, elSensDot, elStatus, elPlayerTime;
 
 function setup() {
-  ligarInterface();
   const cfg = FORMATOS[formatoAtual];
   let cnv = createCanvas(cfg.largura, cfg.altura);
   cnv.parent('canvas-wrapper');
   pixelDensity(1);
+  ligarInterface();
 }
 
 function draw() {
   const cfg = FORMATOS[formatoAtual];
 
-  // Sincroniza o canvas caso o formato tenha mudado
-  if (width !== cfg.largura || height !== cfg.altura) {
-    resizeCanvas(cfg.largura, cfg.altura);
-    pixelDensity(1);
-  }
-
-  // 1. Camada de fundo (desenhada proporcionalmente sem nunca esticar a imagem)
+  // 1. Camada de fundo
   if (imagemFundo) {
-    background('#121212');
+    background(18, 18, 18);
     desenharImagemProporcional(imagemFundo);
   } else {
     desenharGuiaSemImagem(cfg);
   }
 
-  // 2. Leitura RMS da voz e atualização do tempo
+  // 2. Leitura RMS da voz
   const sensibilidade = elSlider ? parseFloat(elSlider.value) : 1.3;
   let rmsInst = 0;
   let progressoAudio = 0;
@@ -124,7 +111,7 @@ function draw() {
   const fatorSuavizacao = rmsInst > rmsSuave ? 0.55 : 0.22;
   rmsSuave = lerp(rmsSuave, rmsInst, fatorSuavizacao);
 
-  // 3. Desenho das 19 bolinhas fixas nas coordenadas exatas do formato ativo
+  // 3. Desenho das 19 bolinhas fixas
   const centroY = cfg.waveY + WAVE_H / 2;
   noStroke();
   fill(corAtual);
@@ -135,9 +122,9 @@ function draw() {
     let intensidadeAlvo = 0;
 
     if (!audioBuffer) {
-      intensidadeAlvo = pow(sin(posNorm * PI), 1.4) * 0.14;
+      intensidadeAlvo = pow(sin(posNorm * PI), 1.4) * 0.25;
     } else if (!estaTocando) {
-      intensidadeAlvo = baseRMS * 0.45;
+      intensidadeAlvo = baseRMS * 0.5;
     } else {
       const distCursor = abs(posNorm - progressoAudio);
       const realceCursor = exp(-pow(distCursor / 0.14, 2));
@@ -162,7 +149,6 @@ function draw() {
   }
 }
 
-// Mantém a proporção original da imagem (object-fit: cover) sem esticar
 function desenharImagemProporcional(img) {
   const imgW = img.width || (img.elt && img.elt.naturalWidth) || width;
   const imgH = img.height || (img.elt && img.elt.naturalHeight) || height;
@@ -178,33 +164,17 @@ function desenharImagemProporcional(img) {
 }
 
 function desenharGuiaSemImagem(cfg) {
-  background('#141414');
+  background(20, 20, 20);
 
-  stroke(255, 255, 255, 14);
+  stroke(255, 255, 255, 16);
   strokeWeight(1);
   line(60, 0, 60, height);
   line(width - 60, 0, width - 60, height);
 
   noFill();
-  stroke(255, 255, 255, 65);
+  stroke(255, 255, 255, 55);
   strokeWeight(2);
   rect(cfg.waveX, cfg.waveY, WAVE_W, WAVE_H);
-
-  noStroke();
-  fill('#F7F6ED');
-  textAlign(CENTER, CENTER);
-  textFont('Oswald, sans-serif');
-  textSize(38);
-  text(
-    formatoAtual === 'story' ? 'STORY 9:16 (1080 × 1920)' : 'POST FEED 4:5 (1080 × 1350)',
-    width / 2,
-    height / 2 - 22
-  );
-
-  textFont('Syne, sans-serif');
-  textSize(19);
-  fill('#9A9A95');
-  text('Importa o PNG exportado do Figma para preencher o fundo', width / 2, height / 2 + 24);
 }
 
 function extrairMapaRMSEstatico(buffer) {
@@ -248,17 +218,30 @@ function extrairMapaRMSEstatico(buffer) {
   return gradados.map((v) => v / picoGradado);
 }
 
+function atualizarIndicadorSensibilidade() {
+  if (!elSlider || !elSensDot) return;
+  const min = parseFloat(elSlider.min) || 0.5;
+  const max = parseFloat(elSlider.max) || 2.5;
+  const val = parseFloat(elSlider.value) || 1.3;
+  const norm = constrain((val - min) / (max - min), 0, 1);
+  const diametro = lerp(DIAMETRO_MIN, DIAMETRO_MAX, norm);
+
+  elSensDot.style.width = `${diametro.toFixed(1)}px`;
+  elSensDot.style.height = `${diametro.toFixed(1)}px`;
+  elSensDot.style.backgroundColor = corAtual;
+}
+
 function ligarInterface() {
   if (interfaceLigada) return;
 
   elDropZone = document.getElementById('drop-zone');
   elCanvasWrapper = document.getElementById('canvas-wrapper');
-  elStageMeta = document.getElementById('stage-meta');
+  elCanvasImportTrigger = document.getElementById('canvas-import-trigger');
+  elCanvasRemoveTrigger = document.getElementById('canvas-remove-trigger');
 
   elInputImg = document.getElementById('input-imagem');
   elInputAudio = document.getElementById('input-audio');
   elBtnImportImg = document.getElementById('btn-import-img');
-  elBtnRemoveImg = document.getElementById('btn-remove-img');
   elBtnImportAudio = document.getElementById('btn-import-audio');
 
   elBtnFmtPost = document.getElementById('btn-fmt-post');
@@ -273,94 +256,97 @@ function ligarInterface() {
   elBtnPlay = document.getElementById('btn-play');
   elBtnExport = document.getElementById('btn-export');
   elSlider = document.getElementById('slider-sensibilidade');
-  elSliderVal = document.getElementById('slider-val');
+  elSensDot = document.getElementById('sens-dot');
   elStatus = document.getElementById('status-texto');
   elPlayerTime = document.getElementById('player-time');
-  elCodecInfo = document.getElementById('codec-info');
 
-  if (!elBtnFmtPost || !elBtnFmtStory) return;
   interfaceLigada = true;
+  atualizarIndicadorSensibilidade();
 
-  // Importar e Remover Imagem
-  elBtnImportImg.addEventListener('click', () => {
-    if (gravando) return;
+  const abrirSeletorImagem = () => {
+    if (gravando || !elInputImg) return;
     elInputImg.value = '';
     elInputImg.click();
-  });
+  };
 
-  elInputImg.addEventListener('change', () => {
+  // Botão Importar Imagem e Ícone Central do Canvas
+  elBtnImportImg?.addEventListener('click', abrirSeletorImagem);
+  elCanvasImportTrigger?.addEventListener('click', abrirSeletorImagem);
+
+  // Ícone de Lixeira sobre a imagem carregada
+  elCanvasRemoveTrigger?.addEventListener('click', removerImagem);
+
+  elInputImg?.addEventListener('change', () => {
     if (elInputImg.files && elInputImg.files[0]) {
       carregarFicheiroImagem(elInputImg.files[0]);
     }
   });
 
-  elBtnRemoveImg.addEventListener('click', removerImagem);
-
   // Importar Áudio
-  elBtnImportAudio.addEventListener('click', () => {
-    if (gravando) return;
+  elBtnImportAudio?.addEventListener('click', () => {
+    if (gravando || !elInputAudio) return;
     elInputAudio.value = '';
     elInputAudio.click();
   });
 
-  elInputAudio.addEventListener('change', () => {
+  elInputAudio?.addEventListener('change', () => {
     if (elInputAudio.files && elInputAudio.files[0]) {
       carregarFicheiroAudio(elInputAudio.files[0]);
     }
   });
 
-  // Seletor de Formato (Post 4:5 vs Story 9:16)
-  elBtnFmtPost.addEventListener('click', () => alterarFormato('post'));
-  elBtnFmtStory.addEventListener('click', () => alterarFormato('story'));
+  // 2 - Layout
+  elBtnFmtPost?.addEventListener('click', () => alterarFormato('post'));
+  elBtnFmtStory?.addEventListener('click', () => alterarFormato('story'));
 
-  // Seletor de Cor (#C53030 vs #F7F6ED)
-  elBtnCorVermelho.addEventListener('click', () => {
+  // 3 - Cor da Waveform
+  elBtnCorVermelho?.addEventListener('click', () => {
     corAtual = CORES_RUC.vermelho;
     elBtnCorVermelho.classList.add('active');
-    elBtnCorBranco.classList.remove('active');
+    elBtnCorBranco?.classList.remove('active');
+    atualizarIndicadorSensibilidade();
   });
 
-  elBtnCorBranco.addEventListener('click', () => {
+  elBtnCorBranco?.addEventListener('click', () => {
     corAtual = CORES_RUC.branco;
     elBtnCorBranco.classList.add('active');
-    elBtnCorVermelho.classList.remove('active');
+    elBtnCorVermelho?.classList.remove('active');
+    atualizarIndicadorSensibilidade();
   });
 
-  // Seletor de Extensão (.mp4 vs .mov em H.264)
-  elBtnExtMp4.addEventListener('click', () => {
+  // 4 - Sensibilidade da Waveform
+  elSlider?.addEventListener('input', atualizarIndicadorSensibilidade);
+
+  // 5 - Exportar Post
+  elBtnExtMp4?.addEventListener('click', () => {
     extensaoEscolhida = 'mp4';
     elBtnExtMp4.classList.add('active');
-    elBtnExtMov.classList.remove('active');
+    elBtnExtMov?.classList.remove('active');
   });
 
-  elBtnExtMov.addEventListener('click', () => {
+  elBtnExtMov?.addEventListener('click', () => {
     extensaoEscolhida = 'mov';
     elBtnExtMov.classList.add('active');
-    elBtnExtMp4.classList.remove('active');
-  });
-
-  // Slider
-  elSlider.addEventListener('input', () => {
-    elSliderVal.textContent = `${parseFloat(elSlider.value).toFixed(2)}×`;
+    elBtnExtMp4?.classList.remove('active');
   });
 
   // Reprodução e Exportação
-  elBtnPlay.addEventListener('click', alternarReproducao);
-  elBtnExport.addEventListener('click', iniciarExportacao);
+  elBtnPlay?.addEventListener('click', alternarReproducao);
+  elBtnExport?.addEventListener('click', iniciarExportacao);
 
   // Drag & Drop
-  elDropZone.addEventListener('dragover', (e) => {
+  elDropZone?.addEventListener('dragover', (e) => {
     e.preventDefault();
     elDropZone.classList.add('drag-over');
   });
 
-  elDropZone.addEventListener('dragleave', (e) => {
+  elDropZone?.addEventListener('dragleave', (e) => {
     if (!elDropZone.contains(e.relatedTarget)) {
       elDropZone.classList.remove('drag-over');
     }
   });
 
-  elDropZone.addEventListener('drop', (e) => {
+  elDropZone?.addEventListener('drop', (e) => {
     e.preventDefault();
     elDropZone.classList.remove('drag-over');
     if (gravando || !e.dataTransfer || !e.dataTransfer.files) return;
@@ -376,13 +362,6 @@ function ligarInterface() {
       }
     });
   });
-
-  const fmtDetetado = escolherFormatoVideo();
-  if (fmtDetetado.suportaH264) {
-    elCodecInfo.textContent = 'Codec H.264 + AAC ativo (compatível com iPhone/iOS, QuickTime e PC).';
-  } else {
-    elCodecInfo.textContent = 'Aviso: este navegador não expõe H.264; usa Chrome, Edge ou Safari para compatibilidade iOS.';
-  }
 }
 
 function alterarFormato(novoFormato) {
@@ -390,19 +369,17 @@ function alterarFormato(novoFormato) {
   formatoAtual = novoFormato;
   const cfg = FORMATOS[formatoAtual];
 
-  if (elStageMeta) elStageMeta.textContent = cfg.label;
-
   if (formatoAtual === 'story') {
-    if (elCanvasWrapper) elCanvasWrapper.classList.add('is-story');
-    if (elBtnFmtStory) elBtnFmtStory.classList.add('active');
-    if (elBtnFmtPost) elBtnFmtPost.classList.remove('active');
+    elCanvasWrapper?.classList.add('is-story');
+    elBtnFmtStory?.classList.add('active');
+    elBtnFmtPost?.classList.remove('active');
   } else {
-    if (elCanvasWrapper) elCanvasWrapper.classList.remove('is-story');
-    if (elBtnFmtPost) elBtnFmtPost.classList.add('active');
-    if (elBtnFmtStory) elBtnFmtStory.classList.remove('active');
+    elCanvasWrapper?.classList.remove('is-story');
+    elBtnFmtPost?.classList.add('active');
+    elBtnFmtStory?.classList.remove('active');
   }
 
-  if (typeof resizeCanvas === 'function') {
+  if (width !== cfg.largura || height !== cfg.altura) {
     resizeCanvas(cfg.largura, cfg.altura);
     pixelDensity(1);
   }
@@ -410,64 +387,58 @@ function alterarFormato(novoFormato) {
 
 function removerImagem() {
   if (gravando) return;
-  if (ultimoUrlImagem) {
-    URL.revokeObjectURL(ultimoUrlImagem);
-    ultimoUrlImagem = null;
-  }
   imagemFundo = null;
   if (elInputImg) elInputImg.value = '';
-  if (elBtnRemoveImg) elBtnRemoveImg.disabled = true;
+  elCanvasWrapper?.classList.remove('has-image');
 
   atualizarEstado(
     audioBuffer
-      ? 'Imagem removida. Podes importar outro PNG ou exportar sobre o fundo escuro.'
-      : 'Imagem removida. Importa o PNG do Figma e o áudio para começar.'
+      ? 'Imagem removida. Podes importar outro PNG ou exportar.'
+      : 'Imagem removida. Importa a imagem e o áudio para começar.'
   );
 }
 
 function carregarFicheiroImagem(ficheiro) {
-  const urlTemp = URL.createObjectURL(ficheiro);
   atualizarEstado(`A carregar imagem ${ficheiro.name}…`);
 
-  loadImage(
-    urlTemp,
-    (img) => {
-      if (ultimoUrlImagem) URL.revokeObjectURL(ultimoUrlImagem);
-      ultimoUrlImagem = urlTemp;
-      imagemFundo = img;
+  const leitor = new FileReader();
+  leitor.onload = (evento) => {
+    const dataUrl = evento.target.result;
+    loadImage(
+      dataUrl,
+      (img) => {
+        imagemFundo = img;
+        elCanvasWrapper?.classList.add('has-image');
 
-      if (elBtnRemoveImg) elBtnRemoveImg.disabled = false;
+        const imgW = img.width || (img.elt && img.elt.naturalWidth) || 0;
+        const imgH = img.height || (img.elt && img.elt.naturalHeight) || 0;
 
-      const imgW = img.width || (img.elt && img.elt.naturalWidth) || 0;
-      const imgH = img.height || (img.elt && img.elt.naturalHeight) || 0;
-
-      // Ajusta automaticamente o formato para corresponder à imagem importada
-      if (imgW > 0 && imgH > 0) {
-        if (imgH / imgW >= 1.45) {
-          alterarFormato('story');
-        } else {
-          alterarFormato('post');
+        if (imgW > 0 && imgH > 0) {
+          if (imgH / imgW >= 1.45) {
+            alterarFormato('story');
+          } else {
+            alterarFormato('post');
+          }
         }
-      }
 
-      if (!audioBuffer) {
-        nomeFicheiroBase = ficheiro.name
-          .replace(/\.[^.]+$/, '')
-          .toLowerCase()
-          .replace(/[^a-z0-9-_]+/g, '-') || 'ruc-post';
-      }
+        if (!audioBuffer) {
+          nomeFicheiroBase = ficheiro.name
+            .replace(/\.[^.]+$/, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9-_]+/g, '-') || 'ruc-post';
+        }
 
-      atualizarEstado(
-        audioBuffer
-          ? `Pronto para exportar (${imgW}×${imgH}px + áudio carregado).`
-          : `Imagem carregada (${imgW}×${imgH}px). Importa agora o áudio.`
-      );
-    },
-    () => {
-      URL.revokeObjectURL(urlTemp);
-      atualizarEstado('Não foi possível ler a imagem. Usa um PNG ou JPG válido.');
-    }
-  );
+        atualizarConfirmacao('Imagem importada:', `${ficheiro.name} (${imgW}×${imgH})`);
+      },
+      () => {
+        atualizarEstado('Não foi possível ler a imagem. Usa um ficheiro PNG ou JPG válido.');
+      }
+    );
+  };
+  leitor.onerror = () => {
+    atualizarEstado('Erro ao ler o ficheiro de imagem.');
+  };
+  leitor.readAsDataURL(ficheiro);
 }
 
 async function carregarFicheiroAudio(ficheiro) {
@@ -481,8 +452,8 @@ async function carregarFicheiroAudio(ficheiro) {
   offsetPausa = 0;
   rmsSuave = 0;
 
-  elBtnPlay.textContent = '▶ Tocar';
-  elBtnExport.disabled = true;
+  if (elBtnPlay) elBtnPlay.textContent = '▶ Tocar';
+  if (elBtnExport) elBtnExport.disabled = true;
   atualizarEstado(`A analisar RMS de ${ficheiro.name}…`);
 
   try {
@@ -505,19 +476,15 @@ async function carregarFicheiroAudio(ficheiro) {
       .toLowerCase()
       .replace(/[^a-z0-9-_]+/g, '-') || 'ruc-post';
 
-    elBtnPlay.disabled = false;
-    elBtnExport.disabled = false;
+    if (elBtnPlay) elBtnPlay.disabled = false;
+    if (elBtnExport) elBtnExport.disabled = false;
     atualizarTempoUI(0, audioBuffer.duration);
 
-    atualizarEstado(
-      imagemFundo
-        ? `Pronto: ${ficheiro.name} (${formatarSegundos(audioBuffer.duration)}).`
-        : `Áudio carregado (${formatarSegundos(audioBuffer.duration)}). Importa também o PNG do layout.`
-    );
+    atualizarConfirmacao('Áudio importado:', `${ficheiro.name} (${formatarSegundos(audioBuffer.duration)})`);
   } catch (erro) {
     audioBuffer = null;
-    elBtnPlay.disabled = true;
-    elBtnExport.disabled = true;
+    if (elBtnPlay) elBtnPlay.disabled = true;
+    if (elBtnExport) elBtnExport.disabled = true;
     atualizarEstado(`Erro ao importar áudio: ${erro.message || erro}`);
     console.error(erro);
   }
@@ -537,7 +504,7 @@ async function alternarReproducao() {
       if (fonte) {
         try { fonte.stop(); } catch (e) {}
       }
-      elBtnPlay.textContent = '▶ Tocar';
+      if (elBtnPlay) elBtnPlay.textContent = '▶ Tocar';
       atualizarEstado('Reprodução em pausa.');
       return;
     }
@@ -545,7 +512,7 @@ async function alternarReproducao() {
     if (offsetPausa >= audioBuffer.duration) offsetPausa = 0;
     iniciarFonteAudio(offsetPausa, false);
 
-    elBtnPlay.textContent = '❚❚ Pausa';
+    if (elBtnPlay) elBtnPlay.textContent = '❚❚ Pausa';
     atualizarEstado('A reproduzir pré-visualização.');
   } catch (erro) {
     atualizarEstado(`Erro na reprodução: ${erro.message || erro}`);
@@ -571,7 +538,7 @@ function iniciarFonteAudio(inicioSegundos, paraGravacao) {
     sourceNode = null;
     estaTocando = false;
     offsetPausa = 0;
-    elBtnPlay.textContent = '▶ Tocar';
+    if (elBtnPlay) elBtnPlay.textContent = '▶ Tocar';
 
     if (gravando) {
       finalizarExportacao();
@@ -585,11 +552,8 @@ function iniciarFonteAudio(inicioSegundos, paraGravacao) {
 
 function escolherFormatoVideo() {
   const candidatosH264 = [
-    'video/mp4;codecs=avc1.64002A,mp4a.40.2',
-    'video/mp4;codecs=avc1.4D402A,mp4a.40.2',
-    'video/mp4;codecs=avc1.42E02A,mp4a.40.2',
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
     'video/mp4;codecs=avc1,mp4a.40.2',
-    'video/mp4;codecs=h264,aac',
     'video/mp4'
   ];
 
@@ -611,15 +575,14 @@ function escolherFormatoVideo() {
 }
 
 function alternarBloqueioUI(bloqueado) {
-  elBtnImportImg.disabled = bloqueado;
-  elBtnRemoveImg.disabled = bloqueado || !imagemFundo;
-  elBtnImportAudio.disabled = bloqueado;
-  elBtnFmtPost.disabled = bloqueado;
-  elBtnFmtStory.disabled = bloqueado;
-  elBtnExtMp4.disabled = bloqueado;
-  elBtnExtMov.disabled = bloqueado;
-  elBtnPlay.disabled = bloqueado;
-  elBtnExport.disabled = bloqueado;
+  if (elBtnImportImg) elBtnImportImg.disabled = bloqueado;
+  if (elBtnImportAudio) elBtnImportAudio.disabled = bloqueado;
+  if (elBtnFmtPost) elBtnFmtPost.disabled = bloqueado;
+  if (elBtnFmtStory) elBtnFmtStory.disabled = bloqueado;
+  if (elBtnExtMp4) elBtnExtMp4.disabled = bloqueado;
+  if (elBtnExtMov) elBtnExtMov.disabled = bloqueado;
+  if (elBtnPlay) elBtnPlay.disabled = bloqueado;
+  if (elBtnExport) elBtnExport.disabled = bloqueado;
 }
 
 async function iniciarExportacao() {
@@ -641,10 +604,6 @@ async function iniciarExportacao() {
     }
 
     const cfg = FORMATOS[formatoAtual];
-    if (width !== cfg.largura || height !== cfg.altura) {
-      resizeCanvas(cfg.largura, cfg.altura);
-      pixelDensity(1);
-    }
 
     offsetPausa = 0;
     rmsSuave = 0;
@@ -652,11 +611,12 @@ async function iniciarExportacao() {
     chunksGravacao = [];
 
     alternarBloqueioUI(true);
+    redraw();
 
     const formatoVideo = escolherFormatoVideo();
     const extFinal = formatoVideo.suportaH264 ? extensaoEscolhida : 'webm';
 
-    atualizarEstado(`A gravar ${extFinal.toUpperCase()} H.264 (${cfg.largura}×${cfg.altura})… Aguarda o fim do áudio.`);
+    atualizarEstado(`A gravar ${extFinal.toUpperCase()} (${cfg.largura}×${cfg.altura})… Aguarda o fim do áudio.`);
 
     const canvasEl = document.querySelector('#canvas-wrapper canvas');
     const canvasStream = canvasEl.captureStream(60);
@@ -668,7 +628,7 @@ async function iniciarExportacao() {
     ]);
 
     const opcoes = {
-      videoBitsPerSecond: 10000000,
+      videoBitsPerSecond: 8000000,
       audioBitsPerSecond: 192000
     };
     if (formatoVideo.mime) opcoes.mimeType = formatoVideo.mime;
@@ -692,14 +652,16 @@ async function iniciarExportacao() {
       linkAuto.download = nomeSaida;
       linkAuto.click();
 
-      elStatus.innerHTML = `Exportação concluída: <a href="${ultimoUrlExportado}" download="${nomeSaida}">Descarregar ${nomeSaida}</a>`;
+      if (elStatus) {
+        elStatus.innerHTML = `Exportação concluída: <a class="status-pill" href="${ultimoUrlExportado}" download="${nomeSaida}">Descarregar ${nomeSaida}</a>`;
+      }
 
       gravando = false;
       streamDest = null;
       alternarBloqueioUI(false);
     };
 
-    mediaRecorder.start(250);
+    mediaRecorder.start();
     iniciarFonteAudio(0, true);
   } catch (erro) {
     gravando = false;
@@ -732,4 +694,15 @@ function atualizarTempoUI(atual, total) {
 
 function atualizarEstado(mensagem) {
   if (elStatus) elStatus.textContent = mensagem;
+}
+
+function atualizarConfirmacao(prefixo, textoEtiqueta) {
+  if (!elStatus) return;
+  elStatus.innerHTML = '';
+  elStatus.appendChild(document.createTextNode(`${prefixo} `));
+
+  const badge = document.createElement('span');
+  badge.className = 'status-pill';
+  badge.textContent = textoEtiqueta;
+  elStatus.appendChild(badge);
 }
