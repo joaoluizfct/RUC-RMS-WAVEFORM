@@ -1,3 +1,4 @@
+
 let audioCtx = null;
 let audioBuffer = null;
 let sourceNode = null;
@@ -12,19 +13,14 @@ let tempoInicioCtx = 0;
 let offsetPausa = 0;
 let paragemManual = false;
 
-// Especificações exatas da caixa no Figma (420x84, spacing 6, 19 bolinhas)
+// Canvas de exportação: 420 × 84 px; 19 colunas da matriz
 const LARGURA_FRAME = 420;
 const ALTURA_FRAME = 84;
-const LARGURA_MAX_UTIL = 412;
 const NUM_BOLINHAS = 19;
-const ESPACAMENTO_GAP = 6;
-const DIAMETRO_MIN = 4;
-const DIAMETRO_MAX = 36;
 const COR_RUC = '#E31E24';
 
 // Mapa estático dos 19 valores RMS extraídos do áudio completo
 let mapaRMSEstatico = [];
-let diametrosVisuais = [];
 let nivelVivo = 0;
 
 let gravando = false;
@@ -40,88 +36,89 @@ function setup() {
   pixelDensity(1);
 
   mapaRMSEstatico = Array.from({ length: NUM_BOLINHAS }, () => 0);
-  diametrosVisuais = Array.from({ length: NUM_BOLINHAS }, () => DIAMETRO_MIN);
 
   ligarInterface();
 }
 
+
 function draw() {
-  // Fundo 100% transparente (canal alfa)
   clear();
 
-  let sensibilidade = parseFloat(elSlider.value);
+  const sensibilidade = parseFloat(elSlider.value);
   let rmsInstantaneo = 0;
   let progressoAudio = 0;
 
+  // RMS vocal em tempo real
   if (estaTocando && audioBuffer && analyserNode && dadosTempo) {
-    // Posição atual da leitura ao longo da faixa (0.0 no início -> 1.0 no fim)
-    let tempoDecorrido = audioCtx.currentTime - tempoInicioCtx;
+    const tempoDecorrido = audioCtx.currentTime - tempoInicioCtx;
     progressoAudio = constrain(tempoDecorrido / audioBuffer.duration, 0, 1);
 
-    // Energia vocal em tempo real (RMS instantâneo)
     analyserNode.getByteTimeDomainData(dadosTempo);
-    let somaQuadrados = dadosTempo.reduce((acc, amostra) => {
-      let normalizado = (amostra - 128) / 128.0;
-      return acc + normalizado * normalizado;
-    }, 0);
+    let somaQuadrados = 0;
 
-    let rmsBruto = sqrt(somaQuadrados / dadosTempo.length);
-    rmsInstantaneo = constrain(pow(rmsBruto * 3.2 * sensibilidade, 0.85), 0, 1);
-  }
-
-  // Ataque rápido nas sílabas e decaimento suave nas pausas
-  let fatorSuavizacao = rmsInstantaneo > nivelVivo ? 0.55 : 0.22;
-  nivelVivo = lerp(nivelVivo, rmsInstantaneo, fatorSuavizacao);
-
-  // Calcula o diâmetro de cada bolinha fixa sem deslocar a onda lateralmente
-  diametrosVisuais = diametrosVisuais.map((dAtual, i) => {
-    let baseEstatica = mapaRMSEstatico[i] || 0;
-    let posNorm = i / (NUM_BOLINHAS - 1);
-
-    let intensidadeAlvo = 0;
-
-    if (!audioBuffer) {
-      // Estado inicial sem ficheiro: leve curva em repouso
-      intensidadeAlvo = sin(posNorm * PI) * 0.1;
-    } else if (!estaTocando) {
-      // Áudio carregado mas parado: mostra a silhueta RMS estática em escala contida
-      intensidadeAlvo = baseEstatica * 0.45;
-    } else {
-      // Em reprodução: as bolinhas crescem no próprio lugar conforme o RMS estático + voz viva
-      let distPlayhead = abs(posNorm - progressoAudio);
-      let focoPlayhead = exp(-pow(distPlayhead / 0.11, 2));
-
-      intensidadeAlvo =
-        baseEstatica * (0.25 + 0.75 * nivelVivo) +
-        focoPlayhead * nivelVivo * 0.32;
+    for (const amostra of dadosTempo) {
+      const normalizado = (amostra - 128) / 128;
+      somaQuadrados += normalizado * normalizado;
     }
 
-    intensidadeAlvo = constrain(intensidadeAlvo, 0, 1);
-    let dAlvo = lerp(DIAMETRO_MIN, DIAMETRO_MAX, intensidadeAlvo);
+    const rmsBruto = sqrt(somaQuadrados / dadosTempo.length);
+    rmsInstantaneo = constrain(
+      pow(rmsBruto * 3.2 * sensibilidade, 0.85),
+      0,
+      1
+    );
+  }
 
-    return constrain(lerp(dAtual, dAlvo, 0.38), DIAMETRO_MIN, DIAMETRO_MAX);
-  });
+  // Ataque rápido e decaimento suave
+  const fatorSuavizacao = rmsInstantaneo > nivelVivo ? 0.55 : 0.18;
+  nivelVivo = lerp(nivelVivo, rmsInstantaneo, fatorSuavizacao);
 
-  // Auto Layout horizontal centrado com 6px exatos entre bordas
-  let somaDiametros = diametrosVisuais.reduce((acc, d) => acc + d, 0);
-  let larguraTotalIdeal = somaDiametros + (NUM_BOLINHAS - 1) * ESPACAMENTO_GAP;
+  // Dot Matrix: posições e diâmetros fixos; RMS revela a máscara
+  const COLUNAS = NUM_BOLINHAS;
+  const LINHAS = 13;
+  const DOT_SIZE = 3.5;
+  const ESPACO_X = 21;
+  const ESPACO_Y = 5.8;
+  const ALTURA_MAX = 6;
 
-  let escalaX = larguraTotalIdeal > LARGURA_MAX_UTIL ? LARGURA_MAX_UTIL / larguraTotalIdeal : 1;
-  let gapEfetivo = ESPACAMENTO_GAP * escalaX;
-  let larguraFinal = larguraTotalIdeal * escalaX;
-
-  let cursorX = (width - larguraFinal) / 2;
-  let centroY = height / 2;
+  const centroX = width / 2;
+  const centroY = height / 2;
 
   noStroke();
   fill(COR_RUC);
 
-  diametrosVisuais.forEach((d) => {
-    let dDesenho = d * escalaX;
-    let x = cursorX + dDesenho / 2;
-    circle(x, centroY, dDesenho);
-    cursorX += dDesenho + gapEfetivo;
-  });
+  for (let i = 0; i < COLUNAS; i++) {
+    const rmsBase = mapaRMSEstatico[i] || 0;
+    let intensidade = rmsBase;
+
+    if (!audioBuffer) {
+      intensidade = 0.12;
+    } else if (!estaTocando) {
+      intensidade = rmsBase;
+    } else {
+      const posNorm = i / (COLUNAS - 1);
+      const distancia = abs(posNorm - progressoAudio);
+      const foco = exp(-pow(distancia / 0.13, 2));
+
+      intensidade =
+        rmsBase * 0.45 +
+        rmsBase * nivelVivo * 0.35 +
+        foco * nivelVivo * 0.55;
+    }
+
+    intensidade = constrain(intensidade, 0, 1);
+    const pontosAtivos = round(intensidade * ALTURA_MAX);
+    const x = centroX + (i - (COLUNAS - 1) / 2) * ESPACO_X;
+
+    for (let j = 0; j < LINHAS; j++) {
+      const distanciaCentro = abs(j - (LINHAS - 1) / 2);
+
+      if (distanciaCentro <= pontosAtivos) {
+        const y = centroY + (j - (LINHAS - 1) / 2) * ESPACO_Y;
+        circle(x, y, DOT_SIZE);
+      }
+    }
+  }
 }
 
 // Lê o ficheiro inteiro e extrai os 19 valores RMS estáticos com gradação espacial
