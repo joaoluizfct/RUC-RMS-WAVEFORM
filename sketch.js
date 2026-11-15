@@ -15,7 +15,7 @@ let tempoInicioCtx = 0;
 let offsetPausa = 0;
 let paragemManual = false;
 
-// Configurações de Formato (Post 4:5 vs Story 9:16)
+// Formatos independentes: mesma waveform (420×84, 19 bolinhas), coordenadas diferentes
 const FORMATOS = {
   post: {
     largura: 1080,
@@ -39,6 +39,7 @@ const CORES_RUC = {
 };
 
 let formatoAtual = 'post';
+let formatoEscolhidoManualmente = false;
 let corAtual = CORES_RUC.vermelho;
 let extensaoEscolhida = 'mp4';
 
@@ -78,6 +79,12 @@ function setup() {
 
 function draw() {
   const cfg = FORMATOS[formatoAtual];
+
+  // Garante que o buffer interno do canvas acompanha sempre o formato ativo (1080×1350 ou 1080×1920)
+  if (width !== cfg.largura || height !== cfg.altura) {
+    resizeCanvas(cfg.largura, cfg.altura);
+    pixelDensity(1);
+  }
 
   // 1. Fundo (PNG do Figma ou guia visual)
   if (imagemFundo) {
@@ -267,8 +274,15 @@ function ligarInterface() {
     if (elInputAudio.files[0]) carregarFicheiroAudio(elInputAudio.files[0]);
   });
 
-  elBtnFmtPost.addEventListener('click', () => alterarFormato('post'));
-  elBtnFmtStory.addEventListener('click', () => alterarFormato('story'));
+  elBtnFmtPost.addEventListener('click', () => {
+    formatoEscolhidoManualmente = true;
+    alterarFormato('post');
+  });
+
+  elBtnFmtStory.addEventListener('click', () => {
+    formatoEscolhidoManualmente = true;
+    alterarFormato('story');
+  });
 
   elBtnCorVermelho.addEventListener('click', () => {
     corAtual = CORES_RUC.vermelho;
@@ -338,22 +352,24 @@ function ligarInterface() {
 }
 
 function alterarFormato(novoFormato) {
-  if (gravando || formatoAtual === novoFormato) return;
+  if (gravando) return;
   formatoAtual = novoFormato;
   const cfg = FORMATOS[formatoAtual];
 
-  resizeCanvas(cfg.largura, cfg.altura);
-  elStageMeta.textContent = cfg.label;
+  if (elStageMeta) elStageMeta.textContent = cfg.label;
 
   if (formatoAtual === 'story') {
-    elCanvasWrapper.classList.add('is-story');
-    elBtnFmtStory.classList.add('active');
-    elBtnFmtPost.classList.remove('active');
+    if (elCanvasWrapper) elCanvasWrapper.classList.add('is-story');
+    if (elBtnFmtStory) elBtnFmtStory.classList.add('active');
+    if (elBtnFmtPost) elBtnFmtPost.classList.remove('active');
   } else {
-    elCanvasWrapper.classList.remove('is-story');
-    elBtnFmtPost.classList.add('active');
-    elBtnFmtStory.classList.remove('active');
+    if (elCanvasWrapper) elCanvasWrapper.classList.remove('is-story');
+    if (elBtnFmtPost) elBtnFmtPost.classList.add('active');
+    if (elBtnFmtStory) elBtnFmtStory.classList.remove('active');
   }
+
+  resizeCanvas(cfg.largura, cfg.altura);
+  pixelDensity(1);
 }
 
 function carregarFicheiroImagem(ficheiro) {
@@ -367,10 +383,13 @@ function carregarFicheiroImagem(ficheiro) {
       ultimoUrlImagem = urlTemp;
       imagemFundo = img;
 
-      if (img.height > img.width * 1.5 && formatoAtual !== 'story') {
-        alterarFormato('story');
-      } else if (img.height <= img.width * 1.5 && formatoAtual !== 'post') {
-        alterarFormato('post');
+      // Deteta automaticamente Story (9:16) vs Post (4:5) apenas se o utilizador não tiver forçado um formato antes
+      if (!formatoEscolhidoManualmente && img.width > 0 && img.height > 0) {
+        if (img.height / img.width >= 1.55) {
+          alterarFormato('story');
+        } else {
+          alterarFormato('post');
+        }
       }
 
       if (!audioBuffer) {
@@ -506,11 +525,12 @@ function iniciarFonteAudio(inicioSegundos, paraGravacao) {
   fonte.start(0, inicioSegundos);
 }
 
+// Prioriza H.264 Level 4.2 (2A) para suportar 1080×1920 a 60fps sem bloquear o MediaRecorder
 function escolherFormatoVideo() {
   const candidatosH264 = [
-    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-    'video/mp4;codecs=avc1.4D401E,mp4a.40.2',
-    'video/mp4;codecs=avc1.640028,mp4a.40.2',
+    'video/mp4;codecs=avc1.64002A,mp4a.40.2',
+    'video/mp4;codecs=avc1.4D402A,mp4a.40.2',
+    'video/mp4;codecs=avc1.42E02A,mp4a.40.2',
     'video/mp4;codecs=avc1,mp4a.40.2',
     'video/mp4;codecs=h264,aac',
     'video/mp4'
@@ -562,6 +582,12 @@ async function iniciarExportacao() {
       ultimoUrlExportado = null;
     }
 
+    const cfg = FORMATOS[formatoAtual];
+    if (width !== cfg.largura || height !== cfg.altura) {
+      resizeCanvas(cfg.largura, cfg.altura);
+      pixelDensity(1);
+    }
+
     offsetPausa = 0;
     rmsSuave = 0;
     gravando = true;
@@ -569,7 +595,6 @@ async function iniciarExportacao() {
 
     alternarBloqueioUI(true);
 
-    const cfg = FORMATOS[formatoAtual];
     const formatoVideo = escolherFormatoVideo();
     const extFinal = formatoVideo.suportaH264 ? extensaoEscolhida : 'webm';
 
