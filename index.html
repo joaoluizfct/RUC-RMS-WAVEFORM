@@ -6,7 +6,7 @@
   <title>RUC · Gerador de Waveform (107.9 FM)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@200..700&family=Syne:wght@400..800&family=Trochut:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@200..700&family=Syne:wght@400..800&family=Trochut:ital,wght@0,400;0,700;1,400&family=Work+Sans:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/p5@1.11.2/lib/p5.min.js"></script>
   <style>
     :root {
@@ -18,6 +18,7 @@
       --ruc-muted: #9A9A95;
       --font-display: 'Oswald', sans-serif;
       --font-ui: 'Syne', sans-serif;
+      --font-body: 'Work Sans', sans-serif;
       --font-editorial: 'Trochut', serif;
     }
 
@@ -29,7 +30,7 @@
     }
 
     body {
-      font-family: var(--font-ui);
+      font-family: var(--font-body);
       background-color: var(--ruc-bg-deep);
       color: var(--ruc-white);
       min-height: 100vh;
@@ -54,7 +55,7 @@
       outline: 2px solid var(--ruc-red);
     }
 
-    /* Cabeçalho inspirado em ruc.pt */
+    /* Cabeçalho RUC */
     .ruc-topbar {
       display: grid;
       grid-template-columns: 124px 1fr auto;
@@ -68,11 +69,6 @@
       padding: 14px 16px;
       border-right: 1px solid var(--ruc-border);
       background: var(--ruc-bg);
-      transition: background-color 0.15s ease;
-    }
-
-    .ruc-logo-box:hover {
-      background: var(--ruc-red);
     }
 
     .ruc-logo-box svg {
@@ -92,7 +88,7 @@
 
     .ruc-title-box h1 {
       font-family: var(--font-display);
-      font-size: 22px;
+      font-size: 23px;
       font-weight: 700;
       letter-spacing: 0.03em;
       text-transform: uppercase;
@@ -101,11 +97,10 @@
     }
 
     .ruc-title-box span {
-      font-family: var(--font-ui);
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
+      font-family: var(--font-body);
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
       color: var(--ruc-muted);
       margin-top: 4px;
     }
@@ -144,11 +139,9 @@
       background: var(--ruc-bg-deep);
       border-right: 1px solid var(--ruc-border);
       display: flex;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 24px;
-      gap: 12px;
+      padding: 28px;
     }
 
     @media (max-width: 840px) {
@@ -159,6 +152,7 @@
     }
 
     #canvas-wrapper {
+      position: relative;
       width: 392px;
       height: 490px;
       border: 1px solid var(--ruc-border);
@@ -178,17 +172,86 @@
       display: block;
     }
 
-    .stage-meta {
-      font-family: var(--font-ui);
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: var(--ruc-muted);
-      text-align: center;
+    /* Ícone de importação centrado quando não há imagem */
+    .canvas-import-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 2;
     }
 
-    /* Coluna de controlos modulares */
+    .canvas-import-overlay .icon-box {
+      width: 56px;
+      height: 56px;
+      border: 1px solid var(--ruc-border);
+      background: rgba(26, 26, 26, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .canvas-import-overlay:hover .icon-box {
+      background: var(--ruc-red);
+      border-color: var(--ruc-red);
+    }
+
+    .canvas-import-overlay svg {
+      width: 24px;
+      height: 24px;
+      stroke: var(--ruc-white);
+      fill: none;
+      stroke-width: 1.8;
+    }
+
+    #canvas-wrapper.has-image .canvas-import-overlay {
+      display: none;
+    }
+
+    /* Overlay de lixeira no hover quando há imagem carregada */
+    .canvas-remove-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(18, 18, 18, 0.62);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 3;
+    }
+
+    #canvas-wrapper.has-image:hover .canvas-remove-overlay {
+      display: flex;
+    }
+
+    .canvas-remove-overlay .trash-box {
+      width: 54px;
+      height: 54px;
+      border: 1px solid var(--ruc-white);
+      background: var(--ruc-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .canvas-remove-overlay:hover .trash-box {
+      background: var(--ruc-red);
+      border-color: var(--ruc-red);
+    }
+
+    .canvas-remove-overlay svg {
+      width: 22px;
+      height: 22px;
+      stroke: var(--ruc-white);
+      fill: none;
+      stroke-width: 1.8;
+    }
+
+    /* Coluna de controlos */
     .ruc-controls {
       display: flex;
       flex-direction: column;
@@ -196,10 +259,10 @@
 
     .control-block {
       border-bottom: 1px solid var(--ruc-border);
-      padding: 15px 18px;
+      padding: 16px 18px;
       display: flex;
       flex-direction: column;
-      gap: 9px;
+      gap: 10px;
     }
 
     .control-block:last-child {
@@ -212,7 +275,7 @@
       font-family: var(--font-ui);
       font-size: 11px;
       font-weight: 700;
-      letter-spacing: 0.07em;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
       color: var(--ruc-muted);
     }
@@ -227,11 +290,6 @@
       border-right: 1px solid var(--ruc-border);
     }
 
-    .btn-full {
-      width: 100%;
-      border: 1px solid var(--ruc-border);
-    }
-
     button {
       font-family: var(--font-ui);
       font-size: 11px;
@@ -241,7 +299,7 @@
       color: var(--ruc-white);
       background: var(--ruc-bg);
       border: none;
-      padding: 11px 10px;
+      padding: 12px 10px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
@@ -265,18 +323,24 @@
       cursor: not-allowed;
     }
 
-    .swatch {
-      width: 11px;
-      height: 11px;
-      display: inline-block;
-      border: 1px solid rgba(247, 246, 237, 0.55);
-      flex-shrink: 0;
+    /* Botões de cor no Passo 3: hover e active assumem a cor da waveform */
+    #btn-cor-vermelho:hover:not(:disabled),
+    #btn-cor-vermelho.active {
+      background: #C53030;
+      color: #F7F6ED;
     }
 
+    #btn-cor-branco:hover:not(:disabled),
+    #btn-cor-branco.active {
+      background: #F7F6ED;
+      color: #1A1A1A;
+    }
+
+    /* Passo 4: Slider + Bolinha dinâmica */
     .slider-wrap {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
     }
 
     input[type="range"] {
@@ -312,34 +376,35 @@
       cursor: pointer;
     }
 
-    .slider-val {
-      font-family: var(--font-display);
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      color: var(--ruc-white);
-      min-width: 38px;
-      text-align: right;
+    .sens-dot-box {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .sens-dot {
+      display: block;
+      width: 15.8px;
+      height: 15.8px;
+      border-radius: 50% !important;
+      background-color: #C53030;
+      transition: background-color 0.15s ease;
     }
 
     .btn-export-main {
       width: 100%;
       border: 1px solid var(--ruc-border);
-      padding: 13px 12px;
+      padding: 14px 12px;
       font-family: var(--font-display);
       font-size: 15px;
       font-weight: 700;
       letter-spacing: 0.06em;
     }
 
-    .codec-note {
-      font-family: var(--font-ui);
-      font-size: 11px;
-      color: var(--ruc-muted);
-      line-height: 1.4;
-    }
-
-    /* Barra inferior estilo player de ruc.pt */
+    /* Barra Inferior estilo Player RUC */
     .ruc-playerbar {
       display: grid;
       grid-template-columns: 136px 1fr auto;
@@ -357,29 +422,37 @@
     .player-status {
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
       padding: 10px 16px;
-      font-family: var(--font-ui);
+      font-family: var(--font-body);
       font-size: 12px;
       font-weight: 500;
       color: var(--ruc-white);
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
 
-    .player-status a {
-      color: var(--ruc-white);
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
       background: var(--ruc-red);
-      padding: 5px 10px;
-      margin-left: 10px;
-      font-family: var(--font-display);
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      font-size: 12px;
+      color: var(--ruc-white);
+      padding: 4px 10px;
+      font-family: var(--font-body);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
       text-decoration: none;
     }
 
-    .player-status a:hover {
+    a.status-pill {
+      font-family: var(--font-display);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    a.status-pill:hover {
       background: var(--ruc-white);
       color: var(--ruc-bg);
     }
@@ -412,7 +485,7 @@
       </div>
       <div class="ruc-title-box">
         <h1>Gerador de Waveform</h1>
-        <span>Rádio Universidade de Coimbra · Edição Social Media</span>
+        <span>Rádio Universidade de Coimbra</span>
       </div>
       <div class="ruc-freq-box">107.9 FM</div>
     </header>
@@ -420,70 +493,85 @@
     <!-- Área Principal -->
     <div class="ruc-main">
       <section class="ruc-stage">
-        <div id="canvas-wrapper"></div>
-        <div class="stage-meta" id="stage-meta">POST 4:5 · 1080 × 1350 PX · WAVEFORM (60, 1226)</div>
+        <div id="canvas-wrapper">
+          <!-- Ícone central para importar imagem quando o canvas está vazio -->
+          <div class="canvas-import-overlay" id="canvas-import-trigger" title="Importar imagem">
+            <div class="icon-box">
+              <svg viewBox="0 0 24 24" stroke-linecap="square" stroke-linejoin="miter">
+                <path d="M12 16V4" />
+                <path d="M7 9l5-5 5 5" />
+                <path d="M4 20h16" />
+              </svg>
+            </div>
+          </div>
+
+          <!-- Ícone de lixeira no hover quando há imagem carregada -->
+          <div class="canvas-remove-overlay" id="canvas-remove-trigger" title="Remover imagem">
+            <div class="trash-box">
+              <svg viewBox="0 0 24 24" stroke-linecap="square" stroke-linejoin="miter">
+                <path d="M3 6h18" />
+                <path d="M8 6V4h8v2" />
+                <path d="M6 6l1 14h10l1-14" />
+                <path d="M10 10v6" />
+                <path d="M14 10v6" />
+              </svg>
+            </div>
+          </div>
+        </div>
       </section>
 
       <aside class="ruc-controls">
         <input type="file" id="input-imagem" accept="image/png,image/jpeg,image/webp" hidden />
         <input type="file" id="input-audio" accept=".mp3,.wav,.ogg,.m4a,.aac,.flac,audio/*" hidden />
 
-        <!-- 01. Ficheiros -->
+        <!-- 1 - Importar ficheiros -->
         <div class="control-block">
-          <span class="block-label">01 · Ficheiros (ou arrastar para a janela)</span>
+          <span class="block-label">1 - Importar ficheiros</span>
           <div class="grid-2">
             <button type="button" id="btn-import-img">Importar Imagem</button>
-            <button type="button" id="btn-remove-img" disabled>Remover Imagem</button>
+            <button type="button" id="btn-import-audio">Importar Áudio</button>
           </div>
-          <button type="button" class="btn-full" id="btn-import-audio">Importar Áudio</button>
         </div>
 
-        <!-- 02. Formato -->
+        <!-- 2 - Layout -->
         <div class="control-block">
-          <span class="block-label">02 · Formato do Layout</span>
+          <span class="block-label">2 - Layout</span>
           <div class="grid-2">
-            <button type="button" id="btn-fmt-post" class="active">Post 4:5 (1080×1350)</button>
-            <button type="button" id="btn-fmt-story">Story 9:16 (1080×1920)</button>
+            <button type="button" id="btn-fmt-post" class="active">Post (1080×1350)</button>
+            <button type="button" id="btn-fmt-story">Story / Reels (1080×1920)</button>
           </div>
         </div>
 
-        <!-- 03. Cor -->
+        <!-- 3 - Cor da Waveform -->
         <div class="control-block">
-          <span class="block-label">03 · Cor das Bolinhas</span>
+          <span class="block-label">3 - Cor da Waveform</span>
           <div class="grid-2">
-            <button type="button" id="btn-cor-vermelho" class="active">
-              <span class="swatch" style="background:#C53030;"></span>
-              Vermelho (#C53030)
-            </button>
-            <button type="button" id="btn-cor-branco">
-              <span class="swatch" style="background:#F7F6ED;"></span>
-              Branco (#F7F6ED)
-            </button>
+            <button type="button" id="btn-cor-vermelho" class="active">Vermelho</button>
+            <button type="button" id="btn-cor-branco">Branco</button>
           </div>
         </div>
 
-        <!-- 04. Sensibilidade -->
+        <!-- 4 - Sensibilidade da Waveform -->
         <div class="control-block">
-          <span class="block-label">04 · Sensibilidade RMS da Voz</span>
+          <span class="block-label">4 - Sensibilidade da Waveform</span>
           <div class="slider-wrap">
             <input type="range" id="slider-sensibilidade" min="0.5" max="2.5" step="0.05" value="1.3" />
-            <span class="slider-val" id="slider-val">1.30×</span>
+            <div class="sens-dot-box" title="Amplitude da bolinha">
+              <span class="sens-dot" id="sens-dot"></span>
+            </div>
           </div>
         </div>
 
-        <!-- 05. Exportação -->
+        <!-- 5 - Exportar Post -->
         <div class="control-block">
-          <span class="block-label">05 · Exportar Vídeo Final (iPhone + PC)</span>
+          <span class="block-label">5 - Exportar Post</span>
           <div class="grid-2">
-            <button type="button" id="btn-ext-mp4" class="active">.MP4 (H.264)</button>
-            <button type="button" id="btn-ext-mov">.MOV (H.264)</button>
+            <button type="button" id="btn-ext-mp4" class="active">.mp4</button>
+            <button type="button" id="btn-ext-mov">.mov</button>
           </div>
           <button type="button" class="btn-export-main" id="btn-export" disabled>
             Exportar Vídeo com Áudio
           </button>
-          <p class="codec-note" id="codec-info">
-            Codificação H.264 + AAC pronta para iOS, QuickTime e Windows.
-          </p>
         </div>
       </aside>
     </div>
@@ -492,12 +580,12 @@
     <footer class="ruc-playerbar">
       <button type="button" class="btn-player" id="btn-play" disabled>▶ Tocar</button>
       <div class="player-status" id="status-texto">
-        Importa o PNG do Figma e o ficheiro de áudio para começar.
+        Importa a imagem e o áudio para começar.
       </div>
       <div class="player-time" id="player-time">00:00 / 00:00</div>
     </footer>
   </div>
 
-  <script src="sketch.js?v=4"></script>
+  <script src="sketch.js?v=7"></script>
 </body>
 </html>
