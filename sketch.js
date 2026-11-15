@@ -9,6 +9,7 @@ let ultimoUrlImagem = null;
 let nomeFicheiroBase = 'post-ruc';
 
 let imagemFundo = null;
+let interfaceLigada = false;
 
 let estaTocando = false;
 let tempoInicioCtx = 0;
@@ -39,7 +40,6 @@ const CORES_RUC = {
 };
 
 let formatoAtual = 'post';
-let formatoEscolhidoManualmente = false;
 let corAtual = CORES_RUC.vermelho;
 let extensaoEscolhida = 'mp4';
 
@@ -64,38 +64,42 @@ let chunksGravacao = [];
 
 // Referências DOM
 let elDropZone, elCanvasWrapper, elStageMeta;
-let elInputImg, elInputAudio, elBtnImportImg, elBtnImportAudio;
+let elInputImg, elInputAudio, elBtnImportImg, elBtnRemoveImg, elBtnImportAudio;
 let elBtnFmtPost, elBtnFmtStory, elBtnCorVermelho, elBtnCorBranco;
 let elBtnExtMp4, elBtnExtMov, elBtnPlay, elBtnExport;
 let elSlider, elSliderVal, elStatus, elPlayerTime, elCodecInfo;
 
+document.addEventListener('DOMContentLoaded', () => {
+  ligarInterface();
+});
+
 function setup() {
+  ligarInterface();
   const cfg = FORMATOS[formatoAtual];
   let cnv = createCanvas(cfg.largura, cfg.altura);
   cnv.parent('canvas-wrapper');
   pixelDensity(1);
-  ligarInterface();
 }
 
 function draw() {
   const cfg = FORMATOS[formatoAtual];
 
-  // Garante que o buffer interno do canvas acompanha sempre o formato ativo (1080×1350 ou 1080×1920)
+  // Sincroniza o canvas caso o formato tenha mudado
   if (width !== cfg.largura || height !== cfg.altura) {
     resizeCanvas(cfg.largura, cfg.altura);
     pixelDensity(1);
   }
 
-  // 1. Fundo (PNG do Figma ou guia visual)
+  // 1. Camada de fundo (desenhada proporcionalmente sem nunca esticar a imagem)
   if (imagemFundo) {
     background('#121212');
-    image(imagemFundo, 0, 0, width, height);
+    desenharImagemProporcional(imagemFundo);
   } else {
     desenharGuiaSemImagem(cfg);
   }
 
   // 2. Leitura RMS da voz e atualização do tempo
-  const sensibilidade = elSlider ? parseFloat(elSlider.value()) : 1.3;
+  const sensibilidade = elSlider ? parseFloat(elSlider.value) : 1.3;
   let rmsInst = 0;
   let progressoAudio = 0;
   let tempoAtual = offsetPausa;
@@ -156,6 +160,21 @@ function draw() {
     const centroX = cfg.waveX + MARGEM_X + i * PASSO_FIXO;
     circle(centroX, centroY, diametrosAtuais[i]);
   }
+}
+
+// Mantém a proporção original da imagem (object-fit: cover) sem esticar
+function desenharImagemProporcional(img) {
+  const imgW = img.width || (img.elt && img.elt.naturalWidth) || width;
+  const imgH = img.height || (img.elt && img.elt.naturalHeight) || height;
+  if (imgW <= 0 || imgH <= 0) return;
+
+  const escala = Math.max(width / imgW, height / imgH);
+  const wFinal = imgW * escala;
+  const hFinal = imgH * escala;
+  const x = (width - wFinal) / 2;
+  const y = (height - hFinal) / 2;
+
+  image(img, x, y, wFinal, hFinal);
 }
 
 function desenharGuiaSemImagem(cfg) {
@@ -230,6 +249,8 @@ function extrairMapaRMSEstatico(buffer) {
 }
 
 function ligarInterface() {
+  if (interfaceLigada) return;
+
   elDropZone = document.getElementById('drop-zone');
   elCanvasWrapper = document.getElementById('canvas-wrapper');
   elStageMeta = document.getElementById('stage-meta');
@@ -237,6 +258,7 @@ function ligarInterface() {
   elInputImg = document.getElementById('input-imagem');
   elInputAudio = document.getElementById('input-audio');
   elBtnImportImg = document.getElementById('btn-import-img');
+  elBtnRemoveImg = document.getElementById('btn-remove-img');
   elBtnImportAudio = document.getElementById('btn-import-audio');
 
   elBtnFmtPost = document.getElementById('btn-fmt-post');
@@ -256,34 +278,42 @@ function ligarInterface() {
   elPlayerTime = document.getElementById('player-time');
   elCodecInfo = document.getElementById('codec-info');
 
+  if (!elBtnFmtPost || !elBtnFmtStory) return;
+  interfaceLigada = true;
+
+  // Importar e Remover Imagem
   elBtnImportImg.addEventListener('click', () => {
     if (gravando) return;
     elInputImg.value = '';
     elInputImg.click();
   });
+
   elInputImg.addEventListener('change', () => {
-    if (elInputImg.files[0]) carregarFicheiroImagem(elInputImg.files[0]);
+    if (elInputImg.files && elInputImg.files[0]) {
+      carregarFicheiroImagem(elInputImg.files[0]);
+    }
   });
 
+  elBtnRemoveImg.addEventListener('click', removerImagem);
+
+  // Importar Áudio
   elBtnImportAudio.addEventListener('click', () => {
     if (gravando) return;
     elInputAudio.value = '';
     elInputAudio.click();
   });
+
   elInputAudio.addEventListener('change', () => {
-    if (elInputAudio.files[0]) carregarFicheiroAudio(elInputAudio.files[0]);
+    if (elInputAudio.files && elInputAudio.files[0]) {
+      carregarFicheiroAudio(elInputAudio.files[0]);
+    }
   });
 
-  elBtnFmtPost.addEventListener('click', () => {
-    formatoEscolhidoManualmente = true;
-    alterarFormato('post');
-  });
+  // Seletor de Formato (Post 4:5 vs Story 9:16)
+  elBtnFmtPost.addEventListener('click', () => alterarFormato('post'));
+  elBtnFmtStory.addEventListener('click', () => alterarFormato('story'));
 
-  elBtnFmtStory.addEventListener('click', () => {
-    formatoEscolhidoManualmente = true;
-    alterarFormato('story');
-  });
-
+  // Seletor de Cor (#C53030 vs #F7F6ED)
   elBtnCorVermelho.addEventListener('click', () => {
     corAtual = CORES_RUC.vermelho;
     elBtnCorVermelho.classList.add('active');
@@ -296,6 +326,7 @@ function ligarInterface() {
     elBtnCorVermelho.classList.remove('active');
   });
 
+  // Seletor de Extensão (.mp4 vs .mov em H.264)
   elBtnExtMp4.addEventListener('click', () => {
     extensaoEscolhida = 'mp4';
     elBtnExtMp4.classList.add('active');
@@ -308,13 +339,16 @@ function ligarInterface() {
     elBtnExtMp4.classList.remove('active');
   });
 
+  // Slider
   elSlider.addEventListener('input', () => {
     elSliderVal.textContent = `${parseFloat(elSlider.value).toFixed(2)}×`;
   });
 
+  // Reprodução e Exportação
   elBtnPlay.addEventListener('click', alternarReproducao);
   elBtnExport.addEventListener('click', iniciarExportacao);
 
+  // Drag & Drop
   elDropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     elDropZone.classList.add('drag-over');
@@ -352,7 +386,7 @@ function ligarInterface() {
 }
 
 function alterarFormato(novoFormato) {
-  if (gravando) return;
+  if (gravando || !FORMATOS[novoFormato]) return;
   formatoAtual = novoFormato;
   const cfg = FORMATOS[formatoAtual];
 
@@ -368,8 +402,27 @@ function alterarFormato(novoFormato) {
     if (elBtnFmtStory) elBtnFmtStory.classList.remove('active');
   }
 
-  resizeCanvas(cfg.largura, cfg.altura);
-  pixelDensity(1);
+  if (typeof resizeCanvas === 'function') {
+    resizeCanvas(cfg.largura, cfg.altura);
+    pixelDensity(1);
+  }
+}
+
+function removerImagem() {
+  if (gravando) return;
+  if (ultimoUrlImagem) {
+    URL.revokeObjectURL(ultimoUrlImagem);
+    ultimoUrlImagem = null;
+  }
+  imagemFundo = null;
+  if (elInputImg) elInputImg.value = '';
+  if (elBtnRemoveImg) elBtnRemoveImg.disabled = true;
+
+  atualizarEstado(
+    audioBuffer
+      ? 'Imagem removida. Podes importar outro PNG ou exportar sobre o fundo escuro.'
+      : 'Imagem removida. Importa o PNG do Figma e o áudio para começar.'
+  );
 }
 
 function carregarFicheiroImagem(ficheiro) {
@@ -383,9 +436,14 @@ function carregarFicheiroImagem(ficheiro) {
       ultimoUrlImagem = urlTemp;
       imagemFundo = img;
 
-      // Deteta automaticamente Story (9:16) vs Post (4:5) apenas se o utilizador não tiver forçado um formato antes
-      if (!formatoEscolhidoManualmente && img.width > 0 && img.height > 0) {
-        if (img.height / img.width >= 1.55) {
+      if (elBtnRemoveImg) elBtnRemoveImg.disabled = false;
+
+      const imgW = img.width || (img.elt && img.elt.naturalWidth) || 0;
+      const imgH = img.height || (img.elt && img.elt.naturalHeight) || 0;
+
+      // Ajusta automaticamente o formato para corresponder à imagem importada
+      if (imgW > 0 && imgH > 0) {
+        if (imgH / imgW >= 1.45) {
           alterarFormato('story');
         } else {
           alterarFormato('post');
@@ -401,8 +459,8 @@ function carregarFicheiroImagem(ficheiro) {
 
       atualizarEstado(
         audioBuffer
-          ? `Pronto para exportar (${img.width}×${img.height}px + áudio carregado).`
-          : `Imagem carregada (${img.width}×${img.height}px). Importa agora o áudio.`
+          ? `Pronto para exportar (${imgW}×${imgH}px + áudio carregado).`
+          : `Imagem carregada (${imgW}×${imgH}px). Importa agora o áudio.`
       );
     },
     () => {
@@ -525,7 +583,6 @@ function iniciarFonteAudio(inicioSegundos, paraGravacao) {
   fonte.start(0, inicioSegundos);
 }
 
-// Prioriza H.264 Level 4.2 (2A) para suportar 1080×1920 a 60fps sem bloquear o MediaRecorder
 function escolherFormatoVideo() {
   const candidatosH264 = [
     'video/mp4;codecs=avc1.64002A,mp4a.40.2',
@@ -555,6 +612,7 @@ function escolherFormatoVideo() {
 
 function alternarBloqueioUI(bloqueado) {
   elBtnImportImg.disabled = bloqueado;
+  elBtnRemoveImg.disabled = bloqueado || !imagemFundo;
   elBtnImportAudio.disabled = bloqueado;
   elBtnFmtPost.disabled = bloqueado;
   elBtnFmtStory.disabled = bloqueado;
