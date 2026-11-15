@@ -76,7 +76,7 @@ function draw() {
   // Dot Matrix: posições e diâmetros fixos; RMS revela a máscara
   const COLUNAS = NUM_BOLINHAS;
   const LINHAS = 19;
-  const DOT_SIZE = 5;
+  const DOT_SIZE = 1;
   const ESPACO_X = 21;
   const ESPACO_Y = 5.8;
   const ALTURA_MAX = 10;
