@@ -3,6 +3,7 @@ let audioBuffer = null;
 let sourceNode = null;
 let analyserNode = null;
 let dadosTempo = null;
+let dadosFrequencia = null;
 let streamDest = null;
 let ultimoUrlExportado = null;
 let nomeFicheiroBase = 'waveform-ruc';
@@ -18,12 +19,14 @@ const ALTURA_FRAME = 84;
 const NUM_BOLINHAS = 19;
 const COR_RUC = '#E31E24';
 const ESPACO_BOLINHAS = 6; // espaço livre entre as bordas das bolinhas
-const DIAMETRO_MIN = 3;
+const DIAMETRO_MIN = 4;
 const DIAMETRO_MAX = 24;
+const FREQUENCIA_MIN = 80;
+const FREQUENCIA_MAX = 10000;
 
-// Mapa estático dos 19 valores RMS extraídos do áudio completo.
-let mapaRMSEstatico = [];
-let nivelVivo = 0;
+// Cada bolinha tem o seu próprio nível suavizado, calculado a partir
+// de uma faixa de frequências diferente do áudio.
+let niveisBolinha = Array.from({ length: NUM_BOLINHAS }, () => 0);
 
 let gravando = false;
 let mediaRecorder = null;
@@ -36,8 +39,6 @@ function setup() {
   let cnv = createCanvas(LARGURA_FRAME, ALTURA_FRAME);
   cnv.parent('canvas-wrapper');
   pixelDensity(1);
-
-  mapaRMSEstatico = Array.from({ length: NUM_BOLINHAS }, () => 0);
   ligarInterface();
 }
 
@@ -45,114 +46,76 @@ function draw() {
   clear();
 
   const sensibilidade = parseFloat(elSlider.value);
-  let rmsInstantaneo = 0;
-  let progressoAudio = 0;
+  const niveisAlvo = Array.from({ length: NUM_BOLINHAS }, () => 0);
 
-  // RMS em tempo real com ganho e limiar baixo para funcionar melhor
-  // também com ficheiros de áudio gravados em níveis diferentes.
-  if (estaTocando && audioBuffer && analyserNode && dadosTempo) {
-    const tempoDecorrido = audioCtx.currentTime - tempoInicioCtx;
-    progressoAudio = constrain(tempoDecorrido / audioBuffer.duration, 0, 1);
-
+  if (estaTocando && audioBuffer && analyserNode && dadosTempo && dadosFrequencia) {
     analyserNode.getByteTimeDomainData(dadosTempo);
-    let somaQuadrados = 0;
+    analyserNode.getFloatFrequencyData(dadosFrequencia);
 
+    // RMS global funciona como porta de silêncio: em pausas, todas as
+    // bolinhas regressam ao mesmo tamanho mínimo.
+    let somaQuadrados = 0;
     for (const amostra of dadosTempo) {
       const normalizado = (amostra - 128) / 128;
       somaQuadrados += normalizado * normalizado;
     }
+    const rmsGlobal = sqrt(somaQuadrados / dadosTempo.length);
 
-    const rmsBruto = sqrt(somaQuadrados / dadosTempo.length);
-    const rmsComGanho = constrain((rmsBruto - 0.003) * 10 * sensibilidade, 0, 1);
-    rmsInstantaneo = pow(rmsComGanho, 0.72);
-  }
+    if (rmsGlobal > 0.003) {
+      const frequenciaFinal = Math.min(FREQUENCIA_MAX, audioCtx.sampleRate / 2);
+      const frequenciaInicial = Math.min(FREQUENCIA_MIN, frequenciaFinal / 2);
+      const razaoFrequencias = frequenciaFinal / frequenciaInicial;
 
-  // Ataque mais rápido e queda controlada para as bolinhas variarem visivelmente.
-  const fatorSuavizacao = rmsInstantaneo > nivelVivo ? 0.72 : 0.12;
-  nivelVivo = lerp(nivelVivo, rmsInstantaneo, fatorSuavizacao);
+      for (let i = 0; i < NUM_BOLINHAS; i++) {
+        // Divide o espectro em faixas logarítmicas. Todas são analisadas
+        // em simultâneo, sem seguir o progresso da reprodução da esquerda
+        // para a direita.
+        const limiteInferior = frequenciaInicial * Math.pow(razaoFrequencias, i / NUM_BOLINHAS);
+        const limiteSuperior = frequenciaInicial * Math.pow(razaoFrequencias, (i + 1) / NUM_BOLINHAS);
+        const binInicial = Math.max(0, Math.floor(limiteInferior * analyserNode.fftSize / audioCtx.sampleRate));
+        const binFinal = Math.min(
+          dadosFrequencia.length,
+          Math.max(binInicial + 1, Math.ceil(limiteSuperior * analyserNode.fftSize / audioCtx.sampleRate))
+        );
 
-  const diametros = [];
+        let somaPotencia = 0;
+        let numeroBins = 0;
+        for (let bin = binInicial; bin < binFinal; bin++) {
+          const db = dadosFrequencia[bin];
+          if (Number.isFinite(db)) {
+            const amplitude = Math.pow(10, db / 20);
+            somaPotencia += amplitude * amplitude;
+            numeroBins++;
+          }
+        }
 
-  for (let i = 0; i < NUM_BOLINHAS; i++) {
-    // Perfil em arco: as bolinhas crescem das extremidades até ao centro.
-    const posicao = i / (NUM_BOLINHAS - 1);
-    const arco = pow(sin(posicao * PI), 0.9);
-    const rmsBase = mapaRMSEstatico[i] || 0;
-    let fatorAudio = audioBuffer ? 0.12 + rmsBase * 0.72 : 0.55;
-
-    if (estaTocando) {
-      const distancia = abs(posicao - progressoAudio);
-      const foco = exp(-pow(distancia / 0.16, 2));
-
-      // O nível ao vivo afeta toda a linha; o foco reforça a zona atual
-      // de reprodução, aumentando a variação entre fala, pausas e picos.
-      fatorAudio = constrain(
-        0.08 + rmsBase * 0.30 + nivelVivo * 0.48 + foco * nivelVivo * 0.72,
-        0.06,
-        1
-      );
+        const rmsFaixa = numeroBins > 0 ? Math.sqrt(somaPotencia / numeroBins) : 0;
+        const dbFaixa = 20 * Math.log10(Math.max(rmsFaixa, 0.000001));
+        const intensidade = constrain((dbFaixa + 62) / 42, 0, 1);
+        niveisAlvo[i] = pow(intensidade, 0.8) * sensibilidade;
+      }
     }
-
-    diametros.push(DIAMETRO_MIN + arco * (DIAMETRO_MAX - DIAMETRO_MIN) * fatorAudio);
   }
 
-  // O espaçamento de 6 px é medido entre as bordas das bolinhas.
-  const larguraLinha = diametros.reduce((soma, d) => soma + d, 0)
-    + ESPACO_BOLINHAS * (NUM_BOLINHAS - 1);
-  let x = (width - larguraLinha) / 2;
+  const passo = width / NUM_BOLINHAS;
+  const diametroMaximoVisivel = Math.min(DIAMETRO_MAX, passo - ESPACO_BOLINHAS);
   const centroY = height / 2;
 
   noStroke();
   fill(COR_RUC);
 
-  for (const diametro of diametros) {
-    circle(x + diametro / 2, centroY, diametro);
-    x += diametro + ESPACO_BOLINHAS;
-  }
-}
-
-// Lê o ficheiro inteiro e extrai um valor RMS para cada uma das 19 bolinhas.
-function extrairMapaRMSEstatico(buffer) {
-  let numCanais = buffer.numberOfChannels;
-  let totalAmostras = buffer.length;
-  let tamanhoSegmento = Math.max(1, Math.floor(totalAmostras / NUM_BOLINHAS));
-
-  let canais = Array.from({ length: numCanais }, (_, c) => buffer.getChannelData(c));
-  let rmsBrutos = [];
-
   for (let i = 0; i < NUM_BOLINHAS; i++) {
-    let inicio = i * tamanhoSegmento;
-    let fim = i === NUM_BOLINHAS - 1 ? totalAmostras : Math.min(totalAmostras, inicio + tamanhoSegmento);
-    let somaQuadrados = 0;
-    let contagem = 0;
+    const alvo = constrain(niveisAlvo[i], 0, 1);
+    const fatorSuavizacao = alvo > niveisBolinha[i] ? 0.65 : 0.16;
+    niveisBolinha[i] = lerp(niveisBolinha[i], alvo, fatorSuavizacao);
 
-    // Amostragem de 4 em 4 para analisar rapidamente ficheiros longos.
-    for (let s = inicio; s < fim; s += 4) {
-      let amostraMono = 0;
-      for (let c = 0; c < numCanais; c++) {
-        amostraMono += canais[c][s];
-      }
-      amostraMono /= numCanais;
-      somaQuadrados += amostraMono * amostraMono;
-      contagem++;
-    }
+    const diametro = DIAMETRO_MIN
+      + niveisBolinha[i] * (diametroMaximoVisivel - DIAMETRO_MIN);
 
-    let rms = contagem > 0 ? Math.sqrt(somaQuadrados / contagem) : 0;
-    rmsBrutos.push(rms);
+    // Centros fixos: o tamanho muda, mas a bolinha não desliza pela linha.
+    const centroX = passo * (i + 0.5);
+    circle(centroX, centroY, diametro);
   }
-
-  let picoMax = Math.max(...rmsBrutos, 0.0001);
-  let normalizados = rmsBrutos.map((v) => Math.pow(v / picoMax, 0.85));
-
-  // Suaviza ligeiramente as diferenças entre bolinhas vizinhas.
-  let gradados = normalizados.map((val, i, arr) => {
-    let ant = i > 0 ? arr[i - 1] : val;
-    let prox = i < arr.length - 1 ? arr[i + 1] : val;
-    return ant * 0.18 + val * 0.64 + prox * 0.18;
-  });
-
-  let picoGradado = Math.max(...gradados, 0.0001);
-  return gradados.map((v) => v / picoGradado);
 }
 
 function ligarInterface() {
@@ -207,6 +170,7 @@ function garantirAudioContext() {
     analyserNode.fftSize = 1024;
     analyserNode.connect(audioCtx.destination);
     dadosTempo = new Uint8Array(analyserNode.fftSize);
+    dadosFrequencia = new Float32Array(analyserNode.frequencyBinCount);
   }
 }
 
@@ -220,7 +184,7 @@ async function carregarAudio(ficheiro) {
   pararAudioAtual(true);
   audioBuffer = null;
   offsetPausa = 0;
-  mapaRMSEstatico = Array.from({ length: NUM_BOLINHAS }, () => 0);
+  niveisBolinha.fill(0);
 
   nomeFicheiroBase = ficheiro.name
     .replace(/\.[^/.]+$/, '')
@@ -229,7 +193,7 @@ async function carregarAudio(ficheiro) {
 
   elBtnPlay.disabled = true;
   elBtnExport.disabled = true;
-  elStatus.textContent = `A analisar RMS de "${ficheiro.name}"...`;
+  elStatus.textContent = `A carregar "${ficheiro.name}"...`;
 
   try {
     garantirAudioContext();
@@ -239,7 +203,6 @@ async function carregarAudio(ficheiro) {
 
     let arrayBuffer = await ficheiro.arrayBuffer();
     audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-    mapaRMSEstatico = extrairMapaRMSEstatico(audioBuffer);
 
     elBtnPlay.disabled = false;
     elBtnExport.disabled = false;
@@ -330,7 +293,7 @@ async function iniciarExportacao() {
 
   pararAudioAtual(true);
   offsetPausa = 0;
-  nivelVivo = 0;
+  niveisBolinha.fill(0);
   gravando = true;
   chunksGravacao = [];
 
